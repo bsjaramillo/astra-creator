@@ -70,6 +70,33 @@ pub fn stop(dir: &Path, service: Option<&str>) -> anyhow::Result<String> {
     }
 }
 
+/// Actualiza el servidor Astra: baja la imagen más nueva (`pull`) y recrea el
+/// contenedor (`up -d --force-recreate`). Si `service` es `None`, actualiza
+/// todas las salas.
+///
+/// El `pull` es best-effort: para imágenes locales (ej. `astra:local`) que no
+/// están en un registry, falla y se omite, pero igual se recrea el contenedor
+/// (útil si la imagen local se reconstruyó por fuera).
+pub fn update(dir: &Path, service: Option<&str>) -> anyhow::Result<String> {
+    let mut out = String::new();
+
+    let pull_args: Vec<&str> = match service {
+        Some(s) => vec!["pull", s],
+        None => vec!["pull"],
+    };
+    match run(dir, &pull_args) {
+        Ok(o) => out.push_str(&o),
+        Err(e) => out.push_str(&format!("(pull omitido — imagen local o registry inaccesible: {})\n", e)),
+    }
+
+    let up_args: Vec<&str> = match service {
+        Some(s) => vec!["up", "-d", "--force-recreate", s],
+        None => vec!["up", "-d", "--force-recreate", "--remove-orphans"],
+    };
+    out.push_str(&run(dir, &up_args)?);
+    Ok(out)
+}
+
 /// Logs de una sala (últimas `tail` líneas).
 pub fn logs(dir: &Path, service: &str, tail: u32) -> anyhow::Result<String> {
     run(
@@ -143,5 +170,14 @@ mod tests {
         std::fs::create_dir_all(&dir).ok();
         std::fs::remove_file(dir.join("docker-compose.yml")).ok();
         assert!(deploy(&dir, None).is_err());
+    }
+
+    #[test]
+    fn update_without_compose_file_errors() {
+        let dir = std::env::temp_dir().join("astra_creator_no_compose_update");
+        std::fs::create_dir_all(&dir).ok();
+        std::fs::remove_file(dir.join("docker-compose.yml")).ok();
+        // Sin compose ni pull posible, el `up` falla → error propagado.
+        assert!(update(&dir, None).is_err());
     }
 }

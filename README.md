@@ -58,8 +58,11 @@ En la TUI:
 | `g` | Generar archivos (astra.toml + docker-compose.yml) sin tocar Docker |
 | `D` | **Deploy**: genera y levanta todas las salas (`docker compose up -d`) |
 | `s` / `x` | Start / Stop de la sala seleccionada |
+| `u` | **Update**: baja la última imagen y recrea la sala (`pull` + `up -d --force-recreate`) |
+| `U` | Update de todas las salas |
 | `l` | Ver logs de la sala |
 | `r` | Refrescar estado |
+| `?` / `h` | Menú de ayuda con todos los atajos |
 | `q` | Salir |
 
 En el formulario: `Tab`/`↑`/`↓` moverse, `Espacio` togglear los switches,

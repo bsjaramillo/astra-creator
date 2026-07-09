@@ -30,6 +30,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Logs => draw_logs(f, area, app),
         Screen::ConfirmDelete => draw_confirm(f, area, app),
         Screen::EditImage => draw_image(f, area, app),
+        Screen::Help => draw_help(f, area),
         Screen::List => {}
     }
 }
@@ -118,7 +119,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
-    let keys = "a:add  e:edit  d:del  i:image  D:deploy  s:start  x:stop  l:logs  g:gen  r:refresh  q:quit";
+    let keys = "a:add  e:edit  d:del  D:deploy  s:start  x:stop  u:update  l:logs  ?:ayuda  q:salir";
     let text = vec![
         Line::from(Span::styled(
             app.message.clone(),
@@ -260,6 +261,70 @@ fn draw_image(f: &mut Frame, area: Rect, app: &App) {
         Block::default()
             .borders(Borders::ALL)
             .title(" Imagen ")
+            .border_style(Style::default().fg(ACCENT)),
+    );
+    f.render_widget(p, popup);
+}
+
+fn draw_help(f: &mut Frame, area: Rect) {
+    let popup = centered(area, 66, 80);
+    f.render_widget(Clear, popup);
+
+    // (tecla, descripción). Un None separa secciones.
+    let entries: &[(&str, &str)] = &[
+        ("↑/↓ · j/k", "Mover la selección de sala"),
+        ("", ""),
+        ("a", "Agregar una sala nueva"),
+        ("e", "Editar la sala seleccionada"),
+        ("d", "Eliminar la sala (el volumen de datos persiste)"),
+        ("i", "Editar la imagen Docker de Astra (todas las salas)"),
+        ("g", "Generar archivos (astra.toml + docker-compose.yml)"),
+        ("", ""),
+        ("D", "Deploy: levantar TODAS las salas (up -d)"),
+        ("s", "Start: iniciar la sala seleccionada"),
+        ("x", "Stop: detener la sala seleccionada"),
+        ("u", "Update: bajar la última imagen y recrear la sala"),
+        ("U", "Update de TODAS las salas"),
+        ("l", "Ver logs de la sala seleccionada"),
+        ("r", "Refrescar el estado de los contenedores"),
+        ("", ""),
+        ("? · h", "Mostrar esta ayuda"),
+        ("q · Esc", "Salir"),
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        "Comandos de astra-creator",
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    for (key, desc) in entries {
+        if key.is_empty() && desc.is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:<12}", key),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(desc.to_string(), Style::default().fg(Color::Gray)),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Cada sala se administra por web en http://<host>:<puerto>/admin",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Cualquier tecla para volver.",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let p = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Ayuda ")
             .border_style(Style::default().fg(ACCENT)),
     );
     f.render_widget(p, popup);

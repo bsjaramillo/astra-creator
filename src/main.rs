@@ -38,6 +38,8 @@ pub enum Screen {
     ConfirmDelete,
     /// Edición de la imagen Docker de Astra (project-level).
     EditImage,
+    /// Menú de ayuda con todos los atajos de teclado.
+    Help,
 }
 
 /// Campos editables en el formulario, en orden de tabulación.
@@ -162,7 +164,7 @@ impl App {
             status: Vec::new(),
             docker_ok,
             message: if docker_ok {
-                "Listo. a: agregar · e: editar · d: borrar · D: deploy · s/x: start/stop · l: logs · q: salir".into()
+                "Listo. a: agregar · D: deploy · s/x: start/stop · u: update · l: logs · ?: ayuda · q: salir".into()
             } else {
                 "⚠ docker no disponible: podés crear salas y generar archivos, pero no gestionar contenedores.".into()
             },
@@ -309,6 +311,10 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
                 }
                 Screen::ConfirmDelete => handle_confirm_key(app, key.code),
                 Screen::EditImage => handle_image_key(app, key.code),
+                Screen::Help => {
+                    // Cualquier tecla cierra la ayuda.
+                    app.screen = Screen::List;
+                }
             }
         }
         if app.should_quit {
@@ -372,6 +378,41 @@ fn handle_list_key(app: &mut App, code: KeyCode) {
                 }
                 app.refresh_status();
             }
+        }
+        KeyCode::Char('u') => {
+            if !app.docker_ok {
+                app.message = "docker no disponible.".into();
+                return;
+            }
+            if let Some(r) = app.selected_room() {
+                app.message = format!("Actualizando '{}' (pull + recreate)…", r.id);
+                let _ = app.save_and_generate();
+                match docker::update(&app.dir, Some(&r.service_name())) {
+                    Ok(_) => app.message = format!("Sala '{}' actualizada a la última imagen.", r.id),
+                    Err(e) => app.message = format!("Update falló: {}", e),
+                }
+                app.refresh_status();
+            }
+        }
+        KeyCode::Char('U') => {
+            if !app.docker_ok {
+                app.message = "docker no disponible.".into();
+                return;
+            }
+            if app.project.rooms.is_empty() {
+                app.message = "No hay salas para actualizar.".into();
+                return;
+            }
+            app.message = "Actualizando todas las salas (pull + recreate)…".into();
+            let _ = app.save_and_generate();
+            match docker::update(&app.dir, None) {
+                Ok(_) => app.message = "Todas las salas actualizadas a la última imagen.".into(),
+                Err(e) => app.message = format!("Update falló: {}", e),
+            }
+            app.refresh_status();
+        }
+        KeyCode::Char('?') | KeyCode::Char('h') => {
+            app.screen = Screen::Help;
         }
         KeyCode::Char('l') => {
             if let Some(r) = app.selected_room() {
