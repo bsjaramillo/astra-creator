@@ -1,0 +1,180 @@
+//! Generación de los artefactos: `astra.toml` por sala y `docker-compose.yml`.
+
+use std::path::Path;
+
+use crate::model::{Project, RoomDef};
+
+/// Escapa una string para un valor TOML entre comillas dobles.
+fn toml_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// GUID estable por sala (≥16 chars), derivado del id.
+fn room_guid(id: &str) -> String {
+    let base = format!("astra-{}-guid", id);
+    if base.len() >= 16 {
+        base
+    } else {
+        format!("{:0<16}", base)
+    }
+}
+
+/// Genera el contenido de `astra.toml` para una sala. Incluye todos los
+/// campos requeridos por `Settings`; el resto usa defaults del server.
+pub fn astra_toml(room: &RoomDef) -> String {
+    format!(
+        "# Generado por astra-creator — sala '{id}'\n\
+         port = {port}\n\
+         bot_name = {bot}\n\
+         room_name = {name}\n\
+         room_topic = {topic}\n\
+         owner_password = {pw}\n\
+         allow_registration = {reg}\n\
+         roomsearch = {search}\n\
+         language = 0\n\
+         web_enabled = true\n\
+         web_port = {port}\n\
+         data_dir = \"/app/data\"\n\
+         link_hub_enabled = false\n\
+         link_hub_port = {linkport}\n\
+         guid = {guid}\n",
+        id = room.id,
+        port = room.port,
+        bot = toml_str(&room.bot_name),
+        name = toml_str(&room.room_name),
+        topic = toml_str(&room.topic),
+        pw = toml_str(&room.owner_password),
+        reg = room.allow_registration,
+        search = room.roomsearch,
+        linkport = room.port.wrapping_add(2),
+        guid = toml_str(&room_guid(&room.id)),
+    )
+}
+
+/// Genera el `docker-compose.yml` con un servicio por sala.
+pub fn compose_yaml(project: &Project) -> String {
+    let mut s = String::new();
+    s.push_str("# Generado por astra-creator. No editar a mano: usá la TUI.\n");
+    s.push_str("services:\n");
+    for r in &project.rooms {
+        let svc = r.service_name();
+        s.push_str(&format!("  {svc}:\n"));
+        s.push_str(&format!("    image: {}\n", project.image));
+        s.push_str(&format!("    container_name: {svc}\n"));
+        s.push_str("    restart: unless-stopped\n");
+        s.push_str("    ports:\n");
+        s.push_str(&format!("      - \"{p}:{p}\"\n", p = r.port));
+        s.push_str(&format!("      - \"{p}:{p}/udp\"\n", p = r.port));
+        s.push_str("    volumes:\n");
+        s.push_str(&format!(
+            "      - ./rooms/{id}/astra.toml:/app/astra.toml:ro\n",
+            id = r.id
+        ));
+        s.push_str(&format!("      - {vol}:/app/data\n", vol = r.volume_name()));
+        s.push_str(&format!(
+            "    command: [\"/app/astra\", \"--config\", \"/app/astra.toml\", \"--port\", \"{}\"]\n",
+            r.port
+        ));
+        s.push_str("    environment:\n");
+        s.push_str("      RUST_LOG: info\n");
+    }
+    if !project.rooms.is_empty() {
+        s.push_str("\nvolumes:\n");
+        for r in &project.rooms {
+            let vol = r.volume_name();
+            s.push_str(&format!("  {vol}:\n    name: {vol}\n"));
+        }
+    }
+    s
+}
+
+/// Escribe todos los artefactos en `base_dir`:
+/// - `astra-creator.json` (estado)
+/// - `docker-compose.yml`
+/// - `rooms/<id>/astra.toml` por cada sala
+pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
+    std::fs::create_dir_all(base_dir)?;
+    project.save(base_dir)?;
+    std::fs::write(base_dir.join("docker-compose.yml"), compose_yaml(project))?;
+    for r in &project.rooms {
+        let dir = base_dir.join("rooms").join(&r.id);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("astra.toml"), astra_toml(r))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn astra_toml_has_required_fields() {
+        let r = RoomDef::new("mi-sala", 5009);
+        let t = astra_toml(&r);
+        for field in [
+            "port =",
+            "bot_name =",
+            "room_name =",
+            "owner_password =",
+            "roomsearch =",
+            "guid =",
+            "data_dir =",
+        ] {
+            assert!(t.contains(field), "falta {} en:\n{}", field, t);
+        }
+        assert!(t.contains("port = 5009"));
+    }
+
+    #[test]
+    fn astra_toml_escapes_values() {
+        let mut r = RoomDef::new("x", 5009);
+        r.room_name = "Sala \"con comillas\"".into();
+        let t = astra_toml(&r);
+        assert!(t.contains("\\\"con comillas\\\""));
+    }
+
+    #[test]
+    fn compose_has_service_per_room() {
+        let mut p = Project::default();
+        p.rooms.push(RoomDef::new("uno", 5009));
+        p.rooms.push(RoomDef::new("dos", 5010));
+        let y = compose_yaml(&p);
+        assert!(y.contains("astra-uno:"));
+        assert!(y.contains("astra-dos:"));
+        assert!(y.contains("\"5009:5009\""));
+        assert!(y.contains("\"5010:5010/udp\""));
+        assert!(y.contains("astra-uno-data:"));
+    }
+
+    #[test]
+    fn write_project_creates_all_files() {
+        let dir = std::env::temp_dir().join(format!("astra_creator_gen_{}", std::process::id()));
+        let mut p = Project::default();
+        p.rooms.push(RoomDef::new("room-a", 5009));
+        write_project(&dir, &p).unwrap();
+        assert!(dir.join("docker-compose.yml").exists());
+        assert!(dir.join("astra-creator.json").exists());
+        assert!(dir.join("rooms/room-a/astra.toml").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn empty_project_compose_has_no_volumes_section() {
+        let p = Project::default();
+        let y = compose_yaml(&p);
+        assert!(!y.contains("\nvolumes:"));
+    }
+}

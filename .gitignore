@@ -1,0 +1,6 @@
+/target
+Cargo.lock
+# Artefactos generados por la propia herramienta al usarla en el repo
+/docker-compose.yml
+/astra-creator.json
+/rooms/
