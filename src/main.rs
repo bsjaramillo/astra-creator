@@ -36,6 +36,8 @@ pub enum Screen {
     Logs,
     /// Confirmación de borrado.
     ConfirmDelete,
+    /// Edición de la imagen Docker de Astra (project-level).
+    EditImage,
 }
 
 /// Campos editables en el formulario, en orden de tabulación.
@@ -142,6 +144,8 @@ pub struct App {
     pub docker_ok: bool,
     pub message: String,
     pub logs: String,
+    /// Buffer de edición de la imagen (activo en `Screen::EditImage`).
+    pub image_buf: String,
     pub should_quit: bool,
 }
 
@@ -163,6 +167,7 @@ impl App {
                 "⚠ docker no disponible: podés crear salas y generar archivos, pero no gestionar contenedores.".into()
             },
             logs: String::new(),
+            image_buf: String::new(),
             should_quit: false,
         };
         app.refresh_status();
@@ -303,6 +308,7 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
                     }
                 }
                 Screen::ConfirmDelete => handle_confirm_key(app, key.code),
+                Screen::EditImage => handle_image_key(app, key.code),
             }
         }
         if app.should_quit {
@@ -382,6 +388,34 @@ fn handle_list_key(app: &mut App, code: KeyCode) {
             Ok(_) => app.message = "Archivos generados (astra.toml + docker-compose.yml).".into(),
             Err(e) => app.message = format!("Error: {}", e),
         },
+        KeyCode::Char('i') => {
+            app.image_buf = app.project.image.clone();
+            app.screen = Screen::EditImage;
+        }
+        _ => {}
+    }
+}
+
+fn handle_image_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc => app.screen = Screen::List,
+        KeyCode::Enter => {
+            let img = app.image_buf.trim();
+            if img.is_empty() {
+                app.message = "La imagen no puede estar vacía.".into();
+                return;
+            }
+            app.project.image = img.to_string();
+            match app.save_and_generate() {
+                Ok(_) => app.message = format!("Imagen actualizada: {}", app.project.image),
+                Err(e) => app.message = format!("Error: {}", e),
+            }
+            app.screen = Screen::List;
+        }
+        KeyCode::Char(c) => app.image_buf.push(c),
+        KeyCode::Backspace => {
+            app.image_buf.pop();
+        }
         _ => {}
     }
 }

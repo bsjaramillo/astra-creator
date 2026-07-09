@@ -29,6 +29,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::Form => draw_form(f, area, app),
         Screen::Logs => draw_logs(f, area, app),
         Screen::ConfirmDelete => draw_confirm(f, area, app),
+        Screen::EditImage => draw_image(f, area, app),
         Screen::List => {}
     }
 }
@@ -117,7 +118,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
-    let keys = "a:add  e:edit  d:del  D:deploy  s:start  x:stop  l:logs  g:gen  r:refresh  q:quit";
+    let keys = "a:add  e:edit  d:del  i:image  D:deploy  s:start  x:stop  l:logs  g:gen  r:refresh  q:quit";
     let text = vec![
         Line::from(Span::styled(
             app.message.clone(),
@@ -231,6 +232,34 @@ fn draw_logs(f: &mut Frame, area: Rect, app: &App) {
         Block::default()
             .borders(Borders::ALL)
             .title(" Logs (Esc para volver) ")
+            .border_style(Style::default().fg(ACCENT)),
+    );
+    f.render_widget(p, popup);
+}
+
+fn draw_image(f: &mut Frame, area: Rect, app: &App) {
+    let popup = centered(area, 70, 30);
+    f.render_widget(Clear, popup);
+    let text = vec![
+        Line::from(Span::styled(
+            "Imagen Docker de Astra (la misma para todas las salas):",
+            Style::default().fg(Color::Gray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("{}_", app.image_buf),
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter: guardar · Esc: cancelar    (ej: ghcr.io/bsjaramillo/astra:latest o astra:local)",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    let p = Paragraph::new(text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Imagen ")
             .border_style(Style::default().fg(ACCENT)),
     );
     f.render_widget(p, popup);
