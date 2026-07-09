@@ -54,6 +54,7 @@ En la TUI:
 | `a` | Agregar sala |
 | `e` | Editar sala seleccionada |
 | `d` | Eliminar sala (conserva el volumen de datos) |
+| `i` | Cambiar la imagen Docker de Astra (ej. `ghcr.io/bsjaramillo/astra:latest` o `astra:local`) |
 | `g` | Generar archivos (astra.toml + docker-compose.yml) sin tocar Docker |
 | `D` | **Deploy**: genera y levanta todas las salas (`docker compose up -d`) |
 | `s` / `x` | Start / Stop de la sala seleccionada |
