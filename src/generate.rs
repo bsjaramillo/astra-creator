@@ -47,8 +47,10 @@ pub fn astra_toml(room: &RoomDef) -> String {
          web_enabled = true\n\
          web_port = {port}\n\
          data_dir = \"/app/data\"\n\
+         # El link (multi-servidor) entra multiplexado por el puerto principal\n\
+         # (`port`); no usa un puerto propio. Para enlazar otro servidor a esta\n\
+         # sala como hub: `--link-client <host>:{port}`.\n\
          link_hub_enabled = false\n\
-         link_hub_port = {linkport}\n\
          guid = {guid}\n",
         id = room.id,
         port = room.port,
@@ -58,7 +60,6 @@ pub fn astra_toml(room: &RoomDef) -> String {
         pw = toml_str(&room.owner_password),
         reg = room.allow_registration,
         search = room.roomsearch,
-        linkport = room.port.wrapping_add(2),
         guid = toml_str(&room_guid(&room.id)),
     )
 }
