@@ -83,8 +83,10 @@ pub fn compose_yaml(project: &Project) -> String {
             id = r.id
         ));
         s.push_str(&format!("      - {vol}:/app/data\n", vol = r.volume_name()));
+        // Solo argumentos: la imagen ya tiene ENTRYPOINT ["/app/astra"].
+        // Repetir el binario haría que Astra lo lea como subcomando.
         s.push_str(&format!(
-            "    command: [\"/app/astra\", \"--config\", \"/app/astra.toml\", \"--port\", \"{}\"]\n",
+            "    command: [\"--config\", \"/app/astra.toml\", \"--port\", \"{}\"]\n",
             r.port
         ));
         s.push_str("    environment:\n");
@@ -157,6 +159,17 @@ mod tests {
         assert!(y.contains("\"5009:5009\""));
         assert!(y.contains("\"5010:5010/udp\""));
         assert!(y.contains("astra-uno-data:"));
+    }
+
+    #[test]
+    fn compose_command_has_no_binary_path() {
+        // La imagen tiene ENTRYPOINT ["/app/astra"]; el command debe llevar
+        // solo args, no repetir /app/astra (si no, Astra lo lee como subcomando).
+        let mut p = Project::default();
+        p.rooms.push(RoomDef::new("x", 5009));
+        let y = compose_yaml(&p);
+        assert!(y.contains("command: [\"--config\", \"/app/astra.toml\", \"--port\", \"5009\"]"));
+        assert!(!y.contains("command: [\"/app/astra\""));
     }
 
     #[test]
