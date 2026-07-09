@@ -64,7 +64,7 @@ pub struct Project {
 }
 
 fn default_image() -> String {
-    "ghcr.io/astra/astra:latest".to_string()
+    "ghcr.io/bsjaramillo/astra:latest".to_string()
 }
 
 impl Default for Project {

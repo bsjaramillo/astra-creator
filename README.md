@@ -1,6 +1,6 @@
 # astra-creator
 
-> TUI para crear y administrar salas de chat [Astra](https://github.com/OWNER/astra) sobre Docker.
+> TUI para crear y administrar salas de chat [Astra](https://github.com/bsjaramillo/astra) sobre Docker.
 
 `astra-creator` es una herramienta de terminal que te deja definir **una o
 varias salas** de chat, generar por cada una su `astra.toml` + un
@@ -15,17 +15,17 @@ un solo binario estático.
 
 **Binario (recomendado):**
 ```bash
-curl -sSL https://raw.githubusercontent.com/OWNER/astra-creator/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/bsjaramillo/astra-creator/main/install.sh | sh
 ```
 
 **Con Cargo:**
 ```bash
-cargo install --git https://github.com/OWNER/astra-creator
+cargo install --git https://github.com/bsjaramillo/astra-creator
 ```
 
 **Desde fuente:**
 ```bash
-git clone https://github.com/OWNER/astra-creator && cd astra-creator
+git clone https://github.com/bsjaramillo/astra-creator && cd astra-creator
 cargo build --release   # -> target/release/astra-creator
 ```
 

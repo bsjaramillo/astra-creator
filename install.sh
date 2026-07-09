@@ -2,16 +2,16 @@
 # Instalador de astra-creator: baja el binario correcto para tu plataforma
 # desde GitHub Releases y lo instala en /usr/local/bin (o ~/.local/bin).
 #
-#   curl -sSL https://raw.githubusercontent.com/<OWNER>/astra-creator/main/install.sh | sh
+#   curl -sSL https://raw.githubusercontent.com/bsjaramillo/astra-creator/main/install.sh | sh
 #
 # Variables:
-#   ASTRA_CREATOR_REPO  owner/repo (default: OWNER/astra-creator)
+#   ASTRA_CREATOR_REPO  owner/repo (default: bsjaramillo/astra-creator)
 #   ASTRA_CREATOR_VERSION  tag a instalar (default: latest)
 #   BINDIR              directorio de instalación
 
 set -eu
 
-REPO="${ASTRA_CREATOR_REPO:-OWNER/astra-creator}"
+REPO="${ASTRA_CREATOR_REPO:-bsjaramillo/astra-creator}"
 VERSION="${ASTRA_CREATOR_VERSION:-latest}"
 
 # Detectar OS/arch.
