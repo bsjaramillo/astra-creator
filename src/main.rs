@@ -17,8 +17,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -202,7 +204,11 @@ impl App {
             }
         };
         // Validaciones de unicidad.
-        let except = if f.editing_existing { Some(f.orig_id.as_str()) } else { None };
+        let except = if f.editing_existing {
+            Some(f.orig_id.as_str())
+        } else {
+            None
+        };
         if !f.editing_existing && self.project.has_id(&id) {
             f.error = Some(format!("Ya existe una sala con id '{}'.", id));
             return;
@@ -245,7 +251,10 @@ fn main() -> Result<()> {
     // archivos desde el estado guardado, sin abrir la TUI (útil para CI /
     // automatización).
     if args.first().map(|s| s.as_str()) == Some("generate") {
-        let dir = args.get(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+        let dir = args
+            .get(1)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
         let project = Project::load(&dir);
         generate::write_project(&dir, &project)?;
         println!(
@@ -305,15 +314,11 @@ fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut A
 fn handle_list_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
-        KeyCode::Down | KeyCode::Char('j') => {
-            if !app.project.rooms.is_empty() {
-                app.selected = (app.selected + 1) % app.project.rooms.len();
-            }
+        KeyCode::Down | KeyCode::Char('j') if !app.project.rooms.is_empty() => {
+            app.selected = (app.selected + 1) % app.project.rooms.len();
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if !app.project.rooms.is_empty() {
-                app.selected = (app.selected + app.project.rooms.len() - 1) % app.project.rooms.len();
-            }
+        KeyCode::Up | KeyCode::Char('k') if !app.project.rooms.is_empty() => {
+            app.selected = (app.selected + app.project.rooms.len() - 1) % app.project.rooms.len();
         }
         KeyCode::Char('a') => {
             app.form = Some(FormBuf::new(app.project.next_free_port()));
@@ -325,10 +330,8 @@ fn handle_list_key(app: &mut App, code: KeyCode) {
                 app.screen = Screen::Form;
             }
         }
-        KeyCode::Char('d') => {
-            if app.selected_room().is_some() {
-                app.screen = Screen::ConfirmDelete;
-            }
+        KeyCode::Char('d') if app.selected_room().is_some() => {
+            app.screen = Screen::ConfirmDelete;
         }
         KeyCode::Char('D') => {
             if !app.docker_ok {
@@ -375,12 +378,10 @@ fn handle_list_key(app: &mut App, code: KeyCode) {
             app.refresh_status();
             app.message = "Estado actualizado.".into();
         }
-        KeyCode::Char('g') => {
-            match app.save_and_generate() {
-                Ok(_) => app.message = "Archivos generados (astra.toml + docker-compose.yml).".into(),
-                Err(e) => app.message = format!("Error: {}", e),
-            }
-        }
+        KeyCode::Char('g') => match app.save_and_generate() {
+            Ok(_) => app.message = "Archivos generados (astra.toml + docker-compose.yml).".into(),
+            Err(e) => app.message = format!("Error: {}", e),
+        },
         _ => {}
     }
 }
@@ -394,7 +395,9 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
             app.screen = Screen::List;
         }
         KeyCode::Tab | KeyCode::Down => f.focus = (f.focus + 1) % Field::ALL.len(),
-        KeyCode::BackTab | KeyCode::Up => f.focus = (f.focus + Field::ALL.len() - 1) % Field::ALL.len(),
+        KeyCode::BackTab | KeyCode::Up => {
+            f.focus = (f.focus + Field::ALL.len() - 1) % Field::ALL.len()
+        }
         KeyCode::Enter => app.submit_form(),
         KeyCode::Char(' ') if field.is_toggle() => match field {
             Field::AllowRegistration => f.allow_registration = !f.allow_registration,
@@ -412,7 +415,7 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
     }
 }
 
-fn field_buf<'a>(f: &'a mut FormBuf, field: Field) -> &'a mut String {
+fn field_buf(f: &mut FormBuf, field: Field) -> &mut String {
     match field {
         Field::Id => &mut f.id,
         Field::RoomName => &mut f.room_name,

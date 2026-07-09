@@ -40,8 +40,15 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(" docker ✗ ", Style::default().fg(Color::Red))
     };
     let line = Line::from(vec![
-        Span::styled(" astra-creator ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)),
-        Span::raw(format!(" {} salas · imagen: {} ", app.project.rooms.len(), app.project.image)),
+        Span::styled(
+            " astra-creator ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!(
+            " {} salas · imagen: {} ",
+            app.project.rooms.len(),
+            app.project.image
+        )),
         docker,
     ]);
     f.render_widget(
@@ -59,8 +66,11 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let header = Row::new(vec!["", "ID", "Nombre", "Puerto", "Estado", "Admin"])
-        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
+    let header = Row::new(vec!["", "ID", "Nombre", "Puerto", "Estado", "Admin"]).style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let rows: Vec<Row> = app
         .project
@@ -109,7 +119,10 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let keys = "a:add  e:edit  d:del  D:deploy  s:start  x:stop  l:logs  g:gen  r:refresh  q:quit";
     let text = vec![
-        Line::from(Span::styled(app.message.clone(), Style::default().fg(ACCENT))),
+        Line::from(Span::styled(
+            app.message.clone(),
+            Style::default().fg(ACCENT),
+        )),
         Line::from(Span::styled(keys, Style::default().fg(Color::DarkGray))),
     ];
     f.render_widget(
@@ -142,7 +155,11 @@ fn draw_form(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered(area, 70, 70);
     f.render_widget(Clear, popup);
 
-    let title = if fb.editing_existing { " Editar sala " } else { " Nueva sala " };
+    let title = if fb.editing_existing {
+        " Editar sala "
+    } else {
+        " Nueva sala "
+    };
     let mut lines: Vec<Line> = Vec::new();
     for (i, field) in Field::ALL.iter().enumerate() {
         let focused = i == fb.focus;
@@ -156,7 +173,11 @@ fn draw_form(f: &mut Frame, area: Rect, app: &App) {
             Field::AllowRegistration => (if fb.allow_registration { "[x]" } else { "[ ]" }).into(),
             Field::RoomSearch => (if fb.roomsearch { "[x]" } else { "[ ]" }).into(),
         };
-        let cursor = if focused && !field.is_toggle() { "_" } else { "" };
+        let cursor = if focused && !field.is_toggle() {
+            "_"
+        } else {
+            ""
+        };
         let label_style = if focused {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
         } else {
@@ -164,20 +185,30 @@ fn draw_form(f: &mut Frame, area: Rect, app: &App) {
         };
         lines.push(Line::from(vec![
             Span::styled(format!("{:>32}: ", field.label()), label_style),
-            Span::styled(format!("{}{}", value, cursor), Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{}{}", value, cursor),
+                Style::default().fg(Color::White),
+            ),
         ]));
     }
     lines.push(Line::from(""));
     if let Some(err) = &fb.error {
-        lines.push(Line::from(Span::styled(err.clone(), Style::default().fg(Color::Red))));
+        lines.push(Line::from(Span::styled(
+            err.clone(),
+            Style::default().fg(Color::Red),
+        )));
     }
     lines.push(Line::from(Span::styled(
         "Tab/↑↓: mover · Enter: guardar · Esc: cancelar · Espacio: toggles",
         Style::default().fg(Color::DarkGray),
     )));
 
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title(title).border_style(Style::default().fg(ACCENT)));
+    let p = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(ACCENT)),
+    );
     f.render_widget(p, popup);
 }
 
@@ -196,14 +227,12 @@ fn draw_logs(f: &mut Frame, area: Rect, app: &App) {
         .rev()
         .collect::<Vec<_>>()
         .join("\n");
-    let p = Paragraph::new(text)
-        .wrap(Wrap { trim: false })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Logs (Esc para volver) ")
-                .border_style(Style::default().fg(ACCENT)),
-        );
+    let p = Paragraph::new(text).wrap(Wrap { trim: false }).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Logs (Esc para volver) ")
+            .border_style(Style::default().fg(ACCENT)),
+    );
     f.render_widget(p, popup);
 }
 
@@ -219,8 +248,11 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(Color::DarkGray),
         )),
     ];
-    let p = Paragraph::new(text)
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL).title(" Confirmar ").border_style(Style::default().fg(Color::Red)));
+    let p = Paragraph::new(text).alignment(Alignment::Center).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Confirmar ")
+            .border_style(Style::default().fg(Color::Red)),
+    );
     f.render_widget(p, popup);
 }

@@ -70,11 +70,6 @@ pub fn stop(dir: &Path, service: Option<&str>) -> anyhow::Result<String> {
     }
 }
 
-/// Baja y elimina todos los contenedores (mantiene los volúmenes de datos).
-pub fn down(dir: &Path) -> anyhow::Result<String> {
-    run(dir, &["down"])
-}
-
 /// Logs de una sala (últimas `tail` líneas).
 pub fn logs(dir: &Path, service: &str, tail: u32) -> anyhow::Result<String> {
     run(
