@@ -77,3 +77,11 @@ tag:
 	git tag -a "$(VERSION)" -m "Release $(VERSION)"
 	git push origin "$(VERSION)"
 	@echo "Tag $(VERSION) pusheado. El workflow de release construirá los binarios."
+
+## untag: borra un tag local y remoto (uso: make untag VERSION=v0.1.0)
+.PHONY: untag
+untag:
+	@test -n "$(VERSION)" || { echo "Uso: make untag VERSION=v0.1.0"; exit 1; }
+	-git tag -d "$(VERSION)"
+	-git push origin --delete "$(VERSION)"
+	@echo "Tag $(VERSION) borrado (local y remoto)."
