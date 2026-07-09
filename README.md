@@ -13,9 +13,14 @@ un solo binario estático.
 
 ## Instalación
 
-**Binario (recomendado):**
+**Linux / macOS (binario):**
 ```bash
 curl -sSL https://raw.githubusercontent.com/bsjaramillo/astra-creator/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/bsjaramillo/astra-creator/main/install.ps1 | iex
 ```
 
 **Con Cargo:**

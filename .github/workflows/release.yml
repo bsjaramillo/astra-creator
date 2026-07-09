@@ -24,6 +24,8 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -44,12 +46,20 @@ jobs:
             cargo build --release --target ${{ matrix.target }}
           fi
         shell: bash
-      - name: Rename binary
+      - name: Package binary
+        id: pkg
         run: |
-          cp target/${{ matrix.target }}/release/astra-creator \
-             astra-creator-$(echo ${{ matrix.target }})
+          src="target/${{ matrix.target }}/release/astra-creator"
+          if [ -f "$src.exe" ]; then
+            out="astra-creator-${{ matrix.target }}.exe"
+            cp "$src.exe" "$out"
+          else
+            out="astra-creator-${{ matrix.target }}"
+            cp "$src" "$out"
+          fi
+          echo "asset=$out" >> "$GITHUB_OUTPUT"
         shell: bash
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: astra-creator-${{ matrix.target }}
+          files: ${{ steps.pkg.outputs.asset }}
