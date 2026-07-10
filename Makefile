@@ -77,7 +77,7 @@ tag:
 	$(eval SEMVER := $(patsubst v%,%,$(VERSION)))
 	sed -i 's/^version = "[0-9]*\.[0-9]*\.[0-9]*"/version = "$(SEMVER)"/' Cargo.toml
 	$(CARGO) generate-lockfile --quiet
-	git add Cargo.toml Cargo.lock
+	git add Cargo.toml
 	git commit -m "chore: bump version to $(VERSION)"
 	git tag -a "$(VERSION)" -m "Release $(VERSION)"
 	git push origin "$(VERSION)"
