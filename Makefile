@@ -82,6 +82,7 @@ tag:
 	git tag -a "$(VERSION)" -m "Release $(VERSION)"
 	git push origin "$(VERSION)"
 	@echo "Tag $(VERSION) pusheado. El workflow publicará binarios e imágenes Docker."
+
 ## untag: borra un tag local y remoto (uso: make untag VERSION=v0.1.0)
 .PHONY: untag
 untag:
