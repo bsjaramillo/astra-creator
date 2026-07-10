@@ -9,6 +9,7 @@ use ratatui::Frame;
 use crate::{App, Field, Screen};
 
 const ACCENT: Color = Color::Cyan;
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
@@ -119,13 +120,34 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
-    let keys = "a:add  e:edit  d:del  D:deploy  s:start  x:stop  u:update  l:logs  ?:ayuda  q:salir";
+    // Determinar texto y estilo del mensaje según el estado.
+    let (msg_text, msg_style) = if app.busy.is_some() {
+        let spinner = SPINNER[(app.spinner_tick as usize) % SPINNER.len()];
+        (
+            format!("{} {}", spinner, app.message),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if app.message.starts_with('✓') {
+        (app.message.clone(), Style::default().fg(Color::Green))
+    } else if app.message.starts_with('✗') {
+        (app.message.clone(), Style::default().fg(Color::Red))
+    } else {
+        (app.message.clone(), Style::default().fg(ACCENT))
+    };
+
+    // Mientras hay una operación en curso, avisar que las acciones Docker
+    // están bloqueadas para evitar doble ejecución accidental.
+    let keys_line = if app.busy.is_some() {
+        "  ⏳ Operación en curso — acciones de Docker bloqueadas hasta que termine"
+    } else {
+        "a:add  e:edit  d:del  D:deploy  s:start  x:stop  u:update  l:logs  ?:ayuda  q:salir"
+    };
+
     let text = vec![
-        Line::from(Span::styled(
-            app.message.clone(),
-            Style::default().fg(ACCENT),
-        )),
-        Line::from(Span::styled(keys, Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(msg_text, msg_style)),
+        Line::from(Span::styled(keys_line, Style::default().fg(Color::DarkGray))),
     ];
     f.render_widget(
         Paragraph::new(text).block(Block::default().borders(Borders::ALL)),

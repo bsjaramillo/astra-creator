@@ -71,13 +71,17 @@ clean:
 ##      dispara el workflow que publica los binarios multi-arch.
 .PHONY: tag
 tag:
-	@test -n "$(VERSION)" || { echo "Uso: make tag VERSION=v0.1.0"; exit 1; }
+	@test -n "$(VERSION)" || { echo "Uso: make tag VERSION=v0.2.0"; exit 1; }
 	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+' || { echo "VERSION debe tener forma vMAJOR.MINOR.PATCH"; exit 1; }
 	@git diff --quiet || { echo "Hay cambios sin commitear; commiteá antes de taggear."; exit 1; }
+	$(eval SEMVER := $(patsubst v%,%,$(VERSION)))
+	sed -i 's/^version = "[0-9]*\.[0-9]*\.[0-9]*"/version = "$(SEMVER)"/' Cargo.toml
+	$(CARGO) generate-lockfile --quiet
+	git add Cargo.toml Cargo.lock
+	git commit -m "chore: bump version to $(VERSION)"
 	git tag -a "$(VERSION)" -m "Release $(VERSION)"
 	git push origin "$(VERSION)"
-	@echo "Tag $(VERSION) pusheado. El workflow de release construirá los binarios."
-
+	@echo "Tag $(VERSION) pusheado. El workflow publicará binarios e imágenes Docker."
 ## untag: borra un tag local y remoto (uso: make untag VERSION=v0.1.0)
 .PHONY: untag
 untag:

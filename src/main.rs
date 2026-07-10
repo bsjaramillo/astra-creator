@@ -14,6 +14,8 @@ mod ui;
 
 use std::io;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -42,6 +44,43 @@ pub enum Screen {
     Help,
 }
 
+/// Operación Docker en curso (usada para feedback visual en el footer).
+pub enum BusyOp {
+    /// `docker compose up -d` para todas las salas.
+    Deploy,
+    /// `docker compose up -d <service>` para una sala concreta.
+    Start(String),
+    /// `docker compose stop <service>`.
+    Stop(String),
+    /// `pull + up --force-recreate` para una sala concreta.
+    Update(String),
+    /// `pull + up --force-recreate` para todas las salas.
+    UpdateAll,
+}
+
+impl BusyOp {
+    /// Mensaje mostrado mientras la operación está en curso.
+    pub fn label(&self) -> String {
+        match self {
+            BusyOp::Deploy     => "Desplegando todas las salas…".into(),
+            BusyOp::Start(id)  => format!("Iniciando '{}'…", id),
+            BusyOp::Stop(id)   => format!("Deteniendo '{}'…", id),
+            BusyOp::Update(id) => format!("Actualizando '{}' (pull + recreate)…", id),
+            BusyOp::UpdateAll  => "Actualizando todas las salas (pull + recreate)…".into(),
+        }
+    }
+    /// Mensaje de éxito una vez finalizada la operación.
+    pub fn success(&self) -> String {
+        match self {
+            BusyOp::Deploy     => "✓ Deploy OK: todas las salas levantadas.".into(),
+            BusyOp::Start(id)  => format!("✓ Sala '{}' iniciada.", id),
+            BusyOp::Stop(id)   => format!("✓ Sala '{}' detenida.", id),
+            BusyOp::Update(id) => format!("✓ Sala '{}' actualizada a la última imagen.", id),
+            BusyOp::UpdateAll  => "✓ Todas las salas actualizadas a la última imagen.".into(),
+        }
+    }
+}
+
 /// Campos editables en el formulario, en orden de tabulación.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Field {
@@ -68,14 +107,14 @@ impl Field {
     ];
     pub fn label(&self) -> &'static str {
         match self {
-            Field::Id => "ID (slug)",
-            Field::RoomName => "Room name",
-            Field::BotName => "Bot name",
-            Field::OwnerPassword => "Owner password",
-            Field::Port => "Port",
-            Field::Topic => "Topic",
+            Field::Id                => "ID (slug)",
+            Field::RoomName          => "Room name",
+            Field::BotName           => "Bot name",
+            Field::OwnerPassword     => "Owner password",
+            Field::Port              => "Port",
+            Field::Topic             => "Topic",
             Field::AllowRegistration => "Allow registration (space toggles)",
-            Field::RoomSearch => "Room search (space toggles)",
+            Field::RoomSearch        => "Room search (space toggles)",
         }
     }
     pub fn is_toggle(&self) -> bool {
@@ -149,6 +188,12 @@ pub struct App {
     /// Buffer de edición de la imagen (activo en `Screen::EditImage`).
     pub image_buf: String,
     pub should_quit: bool,
+    /// Operación Docker en curso (`None` si no hay ninguna activa).
+    pub busy: Option<BusyOp>,
+    /// Contador de ticks para animar el spinner (incrementa cada ~100 ms).
+    pub spinner_tick: u8,
+    /// Slot compartido con el hilo de fondo: contiene el resultado al terminar.
+    pub pending: Option<Arc<Mutex<Option<anyhow::Result<()>>>>>,
 }
 
 impl App {
@@ -171,6 +216,9 @@ impl App {
             logs: String::new(),
             image_buf: String::new(),
             should_quit: false,
+            busy: None,
+            spinner_tick: 0,
+            pending: None,
         };
         app.refresh_status();
         app
@@ -242,8 +290,8 @@ impl App {
         self.form = None;
         self.screen = Screen::List;
         match self.save_and_generate() {
-            Ok(_) => self.message = format!("Sala '{}' guardada y archivos regenerados.", id),
-            Err(e) => self.message = format!("Error al escribir archivos: {}", e),
+            Ok(_) => self.message = format!("✓ Sala '{}' guardada y archivos regenerados.", id),
+            Err(e) => self.message = format!("✗ Error al escribir archivos: {}", e),
         }
         if self.selected >= self.project.rooms.len() && !self.project.rooms.is_empty() {
             self.selected = self.project.rooms.len() - 1;
@@ -297,30 +345,75 @@ fn main() -> Result<()> {
 fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
-        if let Event::Key(key) = event::read()? {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            match app.screen {
-                Screen::List => handle_list_key(app, key.code),
-                Screen::Form => handle_form_key(app, key.code),
-                Screen::Logs => {
-                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+
+        // Verificar si el hilo de fondo completó su operación.
+        let done = if let Some(pending) = &app.pending {
+            let mut guard = pending.lock().unwrap();
+            guard.take()
+        } else {
+            None
+        };
+        if let Some(result) = done {
+            app.message = match result {
+                Ok(_) => app.busy.take().map(|b| b.success()).unwrap_or_default(),
+                Err(e) => {
+                    app.busy = None;
+                    format!("✗ {}", e)
+                }
+            };
+            app.pending = None;
+            app.refresh_status();
+        }
+
+        // Esperar evento hasta 100 ms; el timeout permite animar el spinner.
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                match app.screen {
+                    Screen::List          => handle_list_key(app, key.code),
+                    Screen::Form          => handle_form_key(app, key.code),
+                    Screen::Logs          => {
+                        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
+                            app.screen = Screen::List;
+                        }
+                    }
+                    Screen::ConfirmDelete => handle_confirm_key(app, key.code),
+                    Screen::EditImage     => handle_image_key(app, key.code),
+                    Screen::Help          => {
+                        // Cualquier tecla cierra la ayuda.
                         app.screen = Screen::List;
                     }
                 }
-                Screen::ConfirmDelete => handle_confirm_key(app, key.code),
-                Screen::EditImage => handle_image_key(app, key.code),
-                Screen::Help => {
-                    // Cualquier tecla cierra la ayuda.
-                    app.screen = Screen::List;
-                }
             }
+        } else if app.busy.is_some() {
+            // Timeout sin evento: avanzar el spinner.
+            app.spinner_tick = app.spinner_tick.wrapping_add(1);
         }
+
         if app.should_quit {
             return Ok(());
         }
     }
+}
+
+/// Lanza una operación Docker en un hilo secundario para no bloquear la TUI.
+/// El resultado queda en `app.pending`; el loop principal lo recoge en el
+/// siguiente ciclo y actualiza el mensaje y el estado de los contenedores.
+fn spawn_docker<F>(app: &mut App, op: BusyOp, f: F)
+where
+    F: FnOnce() -> anyhow::Result<()> + Send + 'static,
+{
+    let slot: Arc<Mutex<Option<anyhow::Result<()>>>> = Arc::new(Mutex::new(None));
+    let slot_thread = Arc::clone(&slot);
+    std::thread::spawn(move || {
+        let res = f();
+        *slot_thread.lock().unwrap() = Some(res);
+    });
+    app.message = op.label();
+    app.busy = Some(op);
+    app.pending = Some(slot);
 }
 
 fn handle_list_key(app: &mut App, code: KeyCode) {
@@ -346,70 +439,81 @@ fn handle_list_key(app: &mut App, code: KeyCode) {
             app.screen = Screen::ConfirmDelete;
         }
         KeyCode::Char('D') => {
+            if app.busy.is_some() {
+                return;
+            }
             if !app.docker_ok {
-                app.message = "docker no disponible.".into();
+                app.message = "✗ docker no disponible.".into();
                 return;
             }
             if let Err(e) = app.save_and_generate() {
-                app.message = format!("Error generando: {}", e);
+                app.message = format!("✗ Error generando: {}", e);
                 return;
             }
-            match docker::deploy(&app.dir, None) {
-                Ok(_) => app.message = "Deploy OK: todas las salas levantadas.".into(),
-                Err(e) => app.message = format!("Deploy falló: {}", e),
-            }
-            app.refresh_status();
+            let dir = app.dir.clone();
+            spawn_docker(app, BusyOp::Deploy, move || {
+                docker::deploy(&dir, None).map(|_| ())
+            });
         }
         KeyCode::Char('s') => {
+            if app.busy.is_some() {
+                return;
+            }
             if let Some(r) = app.selected_room() {
                 let _ = app.save_and_generate();
-                match docker::deploy(&app.dir, Some(&r.service_name())) {
-                    Ok(_) => app.message = format!("Sala '{}' iniciada.", r.id),
-                    Err(e) => app.message = format!("Error: {}", e),
-                }
-                app.refresh_status();
+                let dir = app.dir.clone();
+                let svc = r.service_name();
+                spawn_docker(app, BusyOp::Start(r.id.clone()), move || {
+                    docker::deploy(&dir, Some(&svc)).map(|_| ())
+                });
             }
         }
         KeyCode::Char('x') => {
-            if let Some(r) = app.selected_room() {
-                match docker::stop(&app.dir, Some(&r.service_name())) {
-                    Ok(_) => app.message = format!("Sala '{}' detenida.", r.id),
-                    Err(e) => app.message = format!("Error: {}", e),
-                }
-                app.refresh_status();
-            }
-        }
-        KeyCode::Char('u') => {
-            if !app.docker_ok {
-                app.message = "docker no disponible.".into();
+            if app.busy.is_some() {
                 return;
             }
             if let Some(r) = app.selected_room() {
-                app.message = format!("Actualizando '{}' (pull + recreate)…", r.id);
+                let dir = app.dir.clone();
+                let svc = r.service_name();
+                spawn_docker(app, BusyOp::Stop(r.id.clone()), move || {
+                    docker::stop(&dir, Some(&svc)).map(|_| ())
+                });
+            }
+        }
+        KeyCode::Char('u') => {
+            if app.busy.is_some() {
+                return;
+            }
+            if !app.docker_ok {
+                app.message = "✗ docker no disponible.".into();
+                return;
+            }
+            if let Some(r) = app.selected_room() {
                 let _ = app.save_and_generate();
-                match docker::update(&app.dir, Some(&r.service_name())) {
-                    Ok(_) => app.message = format!("Sala '{}' actualizada a la última imagen.", r.id),
-                    Err(e) => app.message = format!("Update falló: {}", e),
-                }
-                app.refresh_status();
+                let dir = app.dir.clone();
+                let svc = r.service_name();
+                spawn_docker(app, BusyOp::Update(r.id.clone()), move || {
+                    docker::update(&dir, Some(&svc)).map(|_| ())
+                });
             }
         }
         KeyCode::Char('U') => {
+            if app.busy.is_some() {
+                return;
+            }
             if !app.docker_ok {
-                app.message = "docker no disponible.".into();
+                app.message = "✗ docker no disponible.".into();
                 return;
             }
             if app.project.rooms.is_empty() {
                 app.message = "No hay salas para actualizar.".into();
                 return;
             }
-            app.message = "Actualizando todas las salas (pull + recreate)…".into();
             let _ = app.save_and_generate();
-            match docker::update(&app.dir, None) {
-                Ok(_) => app.message = "Todas las salas actualizadas a la última imagen.".into(),
-                Err(e) => app.message = format!("Update falló: {}", e),
-            }
-            app.refresh_status();
+            let dir = app.dir.clone();
+            spawn_docker(app, BusyOp::UpdateAll, move || {
+                docker::update(&dir, None).map(|_| ())
+            });
         }
         KeyCode::Char('?') | KeyCode::Char('h') => {
             app.screen = Screen::Help;
@@ -426,8 +530,8 @@ fn handle_list_key(app: &mut App, code: KeyCode) {
             app.message = "Estado actualizado.".into();
         }
         KeyCode::Char('g') => match app.save_and_generate() {
-            Ok(_) => app.message = "Archivos generados (astra.toml + docker-compose.yml).".into(),
-            Err(e) => app.message = format!("Error: {}", e),
+            Ok(_) => app.message = "✓ Archivos generados (astra.toml + docker-compose.yml).".into(),
+            Err(e) => app.message = format!("✗ Error: {}", e),
         },
         KeyCode::Char('i') => {
             app.image_buf = app.project.image.clone();
@@ -448,8 +552,8 @@ fn handle_image_key(app: &mut App, code: KeyCode) {
             }
             app.project.image = img.to_string();
             match app.save_and_generate() {
-                Ok(_) => app.message = format!("Imagen actualizada: {}", app.project.image),
-                Err(e) => app.message = format!("Error: {}", e),
+                Ok(_) => app.message = format!("✓ Imagen actualizada: {}", app.project.image),
+                Err(e) => app.message = format!("✗ Error: {}", e),
             }
             app.screen = Screen::List;
         }
@@ -492,12 +596,12 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
 
 fn field_buf(f: &mut FormBuf, field: Field) -> &mut String {
     match field {
-        Field::Id => &mut f.id,
-        Field::RoomName => &mut f.room_name,
-        Field::BotName => &mut f.bot_name,
+        Field::Id            => &mut f.id,
+        Field::RoomName      => &mut f.room_name,
+        Field::BotName       => &mut f.bot_name,
         Field::OwnerPassword => &mut f.owner_password,
-        Field::Port => &mut f.port,
-        Field::Topic => &mut f.topic,
+        Field::Port          => &mut f.port,
+        Field::Topic         => &mut f.topic,
         _ => unreachable!("toggle no tiene buffer de texto"),
     }
 }
