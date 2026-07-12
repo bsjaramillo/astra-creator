@@ -45,11 +45,6 @@ impl RoomDef {
     pub fn service_name(&self) -> String {
         format!("astra-{}", self.id)
     }
-
-    /// Nombre del volumen de datos.
-    pub fn volume_name(&self) -> String {
-        format!("astra-{}-data", self.id)
-    }
 }
 
 /// Estado completo del proyecto: la lista de salas + la imagen a usar.

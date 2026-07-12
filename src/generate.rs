@@ -75,6 +75,10 @@ pub fn compose_yaml(project: &Project) -> String {
         s.push_str(&format!("    image: {}\n", project.image));
         s.push_str(&format!("    container_name: {svc}\n"));
         s.push_str("    restart: unless-stopped\n");
+        // Corre como el usuario del host para que los archivos de la sala
+        // (DB, bans, cuentas, avatares, scripts) queden accesibles/editables
+        // desde el SO. Cambiá con: PUID=$(id -u) PGID=$(id -g) docker compose up -d
+        s.push_str("    user: \"${PUID:-1000}:${PGID:-1000}\"\n");
         s.push_str("    ports:\n");
         s.push_str(&format!("      - \"{p}:{p}\"\n", p = r.port));
         s.push_str(&format!("      - \"{p}:{p}/udp\"\n", p = r.port));
@@ -83,7 +87,9 @@ pub fn compose_yaml(project: &Project) -> String {
             "      - ./rooms/{id}/astra.toml:/app/astra.toml:ro\n",
             id = r.id
         ));
-        s.push_str(&format!("      - {vol}:/app/data\n", vol = r.volume_name()));
+        // Bind mount: los datos de la sala viven en su propia carpeta
+        // (rooms/<id>/data), accesibles directamente desde el explorador.
+        s.push_str(&format!("      - ./rooms/{id}/data:/app/data\n", id = r.id));
         // Solo argumentos: la imagen ya tiene ENTRYPOINT ["/app/astra"].
         // Repetir el binario haría que Astra lo lea como subcomando.
         s.push_str(&format!(
@@ -93,13 +99,8 @@ pub fn compose_yaml(project: &Project) -> String {
         s.push_str("    environment:\n");
         s.push_str("      RUST_LOG: info\n");
     }
-    if !project.rooms.is_empty() {
-        s.push_str("\nvolumes:\n");
-        for r in &project.rooms {
-            let vol = r.volume_name();
-            s.push_str(&format!("  {vol}:\n    name: {vol}\n"));
-        }
-    }
+    // Ya no hay volúmenes con nombre: cada sala usa un bind mount a
+    // rooms/<id>/data (ver arriba), accesible desde el host.
     s
 }
 
@@ -115,6 +116,10 @@ pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
         let dir = base_dir.join("rooms").join(&r.id);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("astra.toml"), astra_toml(r))?;
+        // Carpeta de datos de la sala (bind mount → /app/data). Se crea acá,
+        // con el dueño del usuario que corre astra-creator, para que Docker
+        // no la cree como root y quede accesible/editable desde el SO.
+        std::fs::create_dir_all(dir.join("data"))?;
     }
     Ok(())
 }
@@ -159,7 +164,11 @@ mod tests {
         assert!(y.contains("astra-dos:"));
         assert!(y.contains("\"5009:5009\""));
         assert!(y.contains("\"5010:5010/udp\""));
-        assert!(y.contains("astra-uno-data:"));
+        // Data como bind mount en la carpeta propia de cada sala.
+        assert!(y.contains("- ./rooms/uno/data:/app/data"));
+        assert!(y.contains("- ./rooms/dos/data:/app/data"));
+        // Corre como el usuario del host.
+        assert!(y.contains("user: \"${PUID:-1000}:${PGID:-1000}\""));
     }
 
     #[test]
@@ -182,6 +191,7 @@ mod tests {
         assert!(dir.join("docker-compose.yml").exists());
         assert!(dir.join("astra-creator.json").exists());
         assert!(dir.join("rooms/room-a/astra.toml").exists());
+        assert!(dir.join("rooms/room-a/data").is_dir());
         std::fs::remove_dir_all(&dir).ok();
     }
 
