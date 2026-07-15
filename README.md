@@ -53,7 +53,7 @@ En la TUI:
 |---|---|
 | `a` | Agregar sala |
 | `e` | Editar sala seleccionada |
-| `d` | Eliminar sala (conserva el volumen de datos) |
+| `d` | Eliminar sala (borra el contenedor, el volumen y la carpeta de datos) |
 | `i` | Cambiar la imagen Docker de Astra (ej. `ghcr.io/bsjaramillo/astra:latest` o `astra:local`) |
 | `g` | Generar archivos (astra.toml + docker-compose.yml) sin tocar Docker |
 | `D` | **Deploy**: genera y levanta todas las salas (`docker compose up -d`) |
@@ -82,12 +82,15 @@ astra-creator generate /srv/astra-salas
 ├── astra-creator.json      # estado (tus salas) — editable/versionable
 ├── docker-compose.yml      # un servicio por sala
 └── rooms/
-    ├── <sala-1>/astra.toml
-    └── <sala-2>/astra.toml
+    ├── <sala-1>/
+    │   ├── astra.toml
+    │   └── data/           # bind mount → /app/data (bans, cuentas, historial)
+    └── <sala-2>/
 ```
 
-Cada sala mapea su puerto host→contenedor (TCP + UDP) y monta un volumen de
-datos propio (`astra-<id>-data`) que persiste bans, cuentas e historial.
+Cada sala mapea su puerto host→contenedor (TCP + UDP) y guarda sus datos en
+`rooms/<id>/data`, accesible directamente desde el host. Al eliminar una sala
+con `d` se borra todo: contenedor, volumen legado y `rooms/<id>`.
 
 ## Administrar cada sala
 

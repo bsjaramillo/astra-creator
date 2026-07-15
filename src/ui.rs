@@ -298,7 +298,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("", ""),
         ("a", "Agregar una sala nueva"),
         ("e", "Editar la sala seleccionada"),
-        ("d", "Eliminar la sala (el volumen de datos persiste)"),
+        ("d", "Eliminar la sala (borra contenedor, volumen y datos)"),
         ("i", "Editar la imagen Docker de Astra (todas las salas)"),
         ("g", "Generar archivos (astra.toml + docker-compose.yml)"),
         ("", ""),
@@ -360,7 +360,11 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
         Line::from(format!("¿Eliminar la sala '{}'?", name)),
         Line::from(""),
         Line::from(Span::styled(
-            "El volumen de datos se conserva. y: sí · cualquier otra: no",
+            "Se borran el contenedor, el volumen y TODOS los datos.",
+            Style::default().fg(Color::Red),
+        )),
+        Line::from(Span::styled(
+            "y: sí · cualquier otra: no",
             Style::default().fg(Color::DarkGray),
         )),
     ];

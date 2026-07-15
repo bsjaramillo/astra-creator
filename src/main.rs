@@ -56,6 +56,8 @@ pub enum BusyOp {
     Update(String),
     /// `pull + up --force-recreate` para todas las salas.
     UpdateAll,
+    /// Borrado completo de una sala: contenedor, volumen legado y carpeta de datos.
+    Destroy(String),
 }
 
 impl BusyOp {
@@ -67,6 +69,7 @@ impl BusyOp {
             BusyOp::Stop(id)   => format!("Deteniendo '{}'…", id),
             BusyOp::Update(id) => format!("Actualizando '{}' (pull + recreate)…", id),
             BusyOp::UpdateAll  => "Actualizando todas las salas (pull + recreate)…".into(),
+            BusyOp::Destroy(id) => format!("Eliminando '{}' (contenedor + datos)…", id),
         }
     }
     /// Mensaje de éxito una vez finalizada la operación.
@@ -77,6 +80,7 @@ impl BusyOp {
             BusyOp::Stop(id)   => format!("✓ Sala '{}' detenida.", id),
             BusyOp::Update(id) => format!("✓ Sala '{}' actualizada a la última imagen.", id),
             BusyOp::UpdateAll  => "✓ Todas las salas actualizadas a la última imagen.".into(),
+            BusyOp::Destroy(id) => format!("✓ Sala '{}' eliminada: contenedor, volumen y datos.", id),
         }
     }
 }
@@ -609,15 +613,36 @@ fn field_buf(f: &mut FormBuf, field: Field) -> &mut String {
 fn handle_confirm_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Char('y') | KeyCode::Enter => {
+            app.screen = Screen::List;
+            if app.busy.is_some() {
+                app.message = "✗ Hay una operación en curso; esperá a que termine.".into();
+                return;
+            }
             if let Some(r) = app.selected_room() {
                 app.project.remove(&r.id);
                 let _ = app.save_and_generate();
                 if app.selected > 0 && app.selected >= app.project.rooms.len() {
                     app.selected -= 1;
                 }
-                app.message = format!("Sala '{}' eliminada (el volumen de datos persiste).", r.id);
+                let dir = app.dir.clone();
+                let docker_ok = app.docker_ok;
+                let id = r.id.clone();
+                let svc = r.service_name();
+                spawn_docker(app, BusyOp::Destroy(r.id), move || {
+                    // Primero el contenedor (libera el bind mount), después la
+                    // carpeta con los datos de la sala.
+                    if docker_ok {
+                        docker::destroy_room(&dir, &svc, &id)?;
+                    }
+                    let room_dir = dir.join("rooms").join(&id);
+                    if room_dir.exists() {
+                        std::fs::remove_dir_all(&room_dir).map_err(|e| {
+                            anyhow::anyhow!("no se pudo borrar {}: {}", room_dir.display(), e)
+                        })?;
+                    }
+                    Ok(())
+                });
             }
-            app.screen = Screen::List;
         }
         _ => app.screen = Screen::List,
     }

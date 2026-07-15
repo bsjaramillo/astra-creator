@@ -97,6 +97,55 @@ pub fn update(dir: &Path, service: Option<&str>) -> anyhow::Result<String> {
     Ok(out)
 }
 
+/// Ejecuta `docker <args...>` (sin compose) y devuelve la salida combinada.
+/// Si la salida contiene `tolerate` (ej. "No such container"), el fallo se
+/// trata como éxito: el recurso ya no existe, que es lo que se buscaba.
+fn docker_raw(args: &[&str], tolerate: &str) -> anyhow::Result<String> {
+    let output = Command::new("docker")
+        .args(args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("no se pudo ejecutar docker: {}", e))?;
+    let mut out = String::from_utf8_lossy(&output.stdout).into_owned();
+    out.push_str(&String::from_utf8_lossy(&output.stderr));
+    if output.status.success() || out.to_lowercase().contains(&tolerate.to_lowercase()) {
+        Ok(out)
+    } else {
+        anyhow::bail!("docker {} falló: {}", args.join(" "), out.trim())
+    }
+}
+
+/// Nombre de proyecto que Docker Compose deriva del directorio: el basename
+/// en minúsculas, filtrado a `[a-z0-9_-]` y sin separadores al inicio.
+fn compose_project_name(dir: &Path) -> String {
+    let base = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let name = base
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let filtered: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    filtered
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_string()
+}
+
+/// Elimina por completo los recursos Docker de una sala: fuerza el borrado de
+/// su contenedor y de los volúmenes con nombre que usaban versiones previas
+/// (`astra-<id>-data`, con y sin prefijo de proyecto compose). No toca el
+/// compose file, así funciona aunque la sala ya no figure en él. Tolerante a
+/// "no existe": solo falla ante errores reales del daemon.
+pub fn destroy_room(dir: &Path, container: &str, room_id: &str) -> anyhow::Result<()> {
+    docker_raw(&["rm", "-f", container], "No such container")?;
+    let legacy = format!("astra-{}-data", room_id);
+    let prefixed = format!("{}_{}", compose_project_name(dir), legacy);
+    docker_raw(&["volume", "rm", &prefixed], "no such volume")?;
+    docker_raw(&["volume", "rm", &legacy], "no such volume")?;
+    Ok(())
+}
+
 /// Logs de una sala (últimas `tail` líneas).
 pub fn logs(dir: &Path, service: &str, tail: u32) -> anyhow::Result<String> {
     run(
@@ -165,11 +214,40 @@ mod tests {
     }
 
     #[test]
+    fn compose_project_name_normalizes_basename() {
+        let dir = std::env::temp_dir().join("Mi Proyecto.Astra");
+        std::fs::create_dir_all(&dir).ok();
+        assert_eq!(compose_project_name(&dir), "miproyectoastra");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn run_without_compose_file_errors() {
         let dir = std::env::temp_dir().join("astra_creator_no_compose_xyz");
         std::fs::create_dir_all(&dir).ok();
         std::fs::remove_file(dir.join("docker-compose.yml")).ok();
         assert!(deploy(&dir, None).is_err());
+    }
+
+    /// Integración real contra el daemon: crea contenedor + volumen legado y
+    /// verifica que `destroy_room` los elimina. Correr con:
+    /// `cargo test destroy_room_removes -- --ignored` (requiere docker + alpine).
+    #[test]
+    #[ignore]
+    fn destroy_room_removes_container_and_legacy_volume() {
+        let sh = |args: &[&str]| Command::new("docker").args(args).output().unwrap();
+        sh(&["run", "-d", "--name", "astra-prueba-del", "alpine", "sleep", "120"]);
+        sh(&["volume", "create", "astra-prueba-del-data"]);
+
+        destroy_room(&std::env::temp_dir(), "astra-prueba-del", "prueba-del").unwrap();
+
+        let ps = sh(&["ps", "-a", "--format", "{{.Names}}"]);
+        assert!(!String::from_utf8_lossy(&ps.stdout).contains("astra-prueba-del"));
+        let vols = sh(&["volume", "ls", "--format", "{{.Name}}"]);
+        assert!(!String::from_utf8_lossy(&vols.stdout).contains("astra-prueba-del-data"));
+
+        // Idempotente: repetir sobre recursos ya inexistentes no falla.
+        destroy_room(&std::env::temp_dir(), "astra-prueba-del", "prueba-del").unwrap();
     }
 
     #[test]
