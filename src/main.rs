@@ -630,17 +630,29 @@ fn handle_confirm_key(app: &mut App, code: KeyCode) {
                 let svc = r.service_name();
                 spawn_docker(app, BusyOp::Destroy(r.id), move || {
                     // Primero el contenedor (libera el bind mount), después la
-                    // carpeta con los datos de la sala.
+                    // carpeta con los datos. Cada paso se intenta aunque el
+                    // anterior falle; los errores se juntan en un solo mensaje.
+                    let mut errors: Vec<String> = Vec::new();
                     if docker_ok {
-                        docker::destroy_room(&dir, &svc, &id)?;
+                        if let Err(e) = docker::destroy_room(&dir, &svc, &id) {
+                            errors.push(e.to_string());
+                        }
                     }
                     let room_dir = dir.join("rooms").join(&id);
                     if room_dir.exists() {
-                        std::fs::remove_dir_all(&room_dir).map_err(|e| {
-                            anyhow::anyhow!("no se pudo borrar {}: {}", room_dir.display(), e)
-                        })?;
+                        if let Err(e) = std::fs::remove_dir_all(&room_dir) {
+                            errors.push(format!(
+                                "no se pudo borrar {}: {}",
+                                room_dir.display(),
+                                e
+                            ));
+                        }
                     }
-                    Ok(())
+                    if errors.is_empty() {
+                        Ok(())
+                    } else {
+                        anyhow::bail!(errors.join(" · "))
+                    }
                 });
             }
         }

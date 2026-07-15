@@ -98,20 +98,31 @@ pub fn update(dir: &Path, service: Option<&str>) -> anyhow::Result<String> {
 }
 
 /// Ejecuta `docker <args...>` (sin compose) y devuelve la salida combinada.
-/// Si la salida contiene `tolerate` (ej. "No such container"), el fallo se
-/// trata como éxito: el recurso ya no existe, que es lo que se buscaba.
-fn docker_raw(args: &[&str], tolerate: &str) -> anyhow::Result<String> {
+/// Si la salida contiene alguna frase de `tolerate` (ej. "No such container",
+/// "not found"), el fallo se trata como éxito: el recurso ya no existe, que
+/// es lo que se buscaba. Las frases varían entre versiones de Docker.
+fn docker_raw(args: &[&str], tolerate: &[&str]) -> anyhow::Result<String> {
     let output = Command::new("docker")
         .args(args)
         .output()
         .map_err(|e| anyhow::anyhow!("no se pudo ejecutar docker: {}", e))?;
     let mut out = String::from_utf8_lossy(&output.stdout).into_owned();
     out.push_str(&String::from_utf8_lossy(&output.stderr));
-    if output.status.success() || out.to_lowercase().contains(&tolerate.to_lowercase()) {
+    let lower = out.to_lowercase();
+    if output.status.success() || tolerate.iter().any(|t| lower.contains(&t.to_lowercase())) {
         Ok(out)
     } else {
         anyhow::bail!("docker {} falló: {}", args.join(" "), out.trim())
     }
+}
+
+/// ¿Existe el volumen? (`docker volume inspect` best-effort)
+fn volume_exists(name: &str) -> bool {
+    Command::new("docker")
+        .args(["volume", "inspect", name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Nombre de proyecto que Docker Compose deriva del directorio: el basename
@@ -138,11 +149,17 @@ fn compose_project_name(dir: &Path) -> String {
 /// compose file, así funciona aunque la sala ya no figure en él. Tolerante a
 /// "no existe": solo falla ante errores reales del daemon.
 pub fn destroy_room(dir: &Path, container: &str, room_id: &str) -> anyhow::Result<()> {
-    docker_raw(&["rm", "-f", container], "No such container")?;
+    docker_raw(&["rm", "-f", container], &["No such container", "not found"])?;
     let legacy = format!("astra-{}-data", room_id);
     let prefixed = format!("{}_{}", compose_project_name(dir), legacy);
-    docker_raw(&["volume", "rm", &prefixed], "no such volume")?;
-    docker_raw(&["volume", "rm", &legacy], "no such volume")?;
+    for vol in [prefixed, legacy] {
+        // Se consulta la existencia primero en vez de tolerar el error del
+        // `rm`: la frase exacta ("no such volume" / "not found") cambia entre
+        // versiones de Docker y no es confiable para distinguir fallos reales.
+        if volume_exists(&vol) {
+            docker_raw(&["volume", "rm", &vol], &["no such volume", "not found"])?;
+        }
+    }
     Ok(())
 }
 
