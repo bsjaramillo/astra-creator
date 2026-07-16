@@ -69,7 +69,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let header = Row::new(vec!["", "ID", "Nombre", "Puerto", "Estado", "Admin"]).style(
+    let header = Row::new(vec!["", "ID", "Nombre", "Puerto", "Estado", "Versión", "Admin"]).style(
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::BOLD),
@@ -94,13 +94,21 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default()
             };
+            // Con dominio configurado el admin entra por HTTPS vía Caddy;
+            // si no, directo por el puerto de la sala.
+            let admin = if r.domain.is_empty() {
+                format!(":{}/admin", r.port)
+            } else {
+                format!("https://{}/admin", r.domain)
+            };
             Row::new(vec![
                 Span::raw(sel.to_string()),
                 Span::styled(r.id.clone(), row_style),
                 Span::raw(r.room_name.clone()),
                 Span::raw(r.port.to_string()),
                 Span::styled(state, state_style),
-                Span::raw(format!(":{}/admin", r.port)),
+                Span::raw(app.version_of(r)),
+                Span::raw(admin),
             ])
         })
         .collect();
@@ -108,10 +116,11 @@ fn draw_body(f: &mut Frame, area: Rect, app: &App) {
     let widths = [
         Constraint::Length(2),
         Constraint::Length(16),
-        Constraint::Min(14),
+        Constraint::Min(10),
         Constraint::Length(7),
         Constraint::Length(9),
-        Constraint::Length(14),
+        Constraint::Length(15),
+        Constraint::Length(30),
     ];
     let table = Table::new(rows, widths)
         .header(header)
@@ -194,6 +203,7 @@ fn draw_form(f: &mut Frame, area: Rect, app: &App) {
             Field::OwnerPassword => "*".repeat(fb.owner_password.chars().count()),
             Field::Port => fb.port.clone(),
             Field::Topic => fb.topic.clone(),
+            Field::Domain => fb.domain.clone(),
             Field::AllowRegistration => (if fb.allow_registration { "[x]" } else { "[ ]" }).into(),
             Field::RoomSearch => (if fb.roomsearch { "[x]" } else { "[ ]" }).into(),
         };
@@ -300,7 +310,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         ("e", "Editar la sala seleccionada"),
         ("d", "Eliminar la sala (borra contenedor, volumen y datos)"),
         ("i", "Editar la imagen Docker de Astra (todas las salas)"),
-        ("g", "Generar archivos (astra.toml + docker-compose.yml)"),
+        ("g", "Generar archivos (astra.toml + compose + Caddyfile)"),
         ("", ""),
         ("D", "Deploy: levantar TODAS las salas (up -d)"),
         ("s", "Start: iniciar la sala seleccionada"),
@@ -336,6 +346,10 @@ fn draw_help(f: &mut Frame, area: Rect) {
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Cada sala se administra por web en http://<host>:<puerto>/admin",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Con dominio HTTPS configurado: https://<dominio>/admin (Caddy + Let's Encrypt).",
         Style::default().fg(Color::DarkGray),
     )));
     lines.push(Line::from(Span::styled(

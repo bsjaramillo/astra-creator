@@ -55,7 +55,7 @@ En la TUI:
 | `e` | Editar sala seleccionada |
 | `d` | Eliminar sala (borra el contenedor, el volumen y la carpeta de datos) |
 | `i` | Cambiar la imagen Docker de Astra (ej. `ghcr.io/bsjaramillo/astra:latest` o `astra:local`) |
-| `g` | Generar archivos (astra.toml + docker-compose.yml) sin tocar Docker |
+| `g` | Generar archivos (astra.toml + docker-compose.yml + Caddyfile) sin tocar Docker |
 | `D` | **Deploy**: genera y levanta todas las salas (`docker compose up -d`) |
 | `s` / `x` | Start / Stop de la sala seleccionada |
 | `u` | **Update**: baja la última imagen y recrea la sala (`pull` + `up -d --force-recreate`) |
@@ -67,6 +67,25 @@ En la TUI:
 
 En el formulario: `Tab`/`↑`/`↓` moverse, `Espacio` togglear los switches,
 `Enter` guardar, `Esc` cancelar.
+
+La lista muestra por sala su estado y la **versión de Astra** que corre en el
+contenedor (leída del binario en vivo, así ves qué salas quedaron atrás
+después de un update).
+
+### HTTPS (opcional, por sala)
+
+Poné un **dominio** en el campo "Dominio HTTPS" del formulario (ej.
+`chat.midominio.com`, con su DNS apuntando al servidor). Con al menos una sala
+con dominio, el deploy agrega un [Caddy](https://caddyserver.com) como reverse
+proxy que obtiene y renueva solo los certificados de Let's Encrypt:
+
+- `https://<dominio>/`      → cliente web de esa sala (TLS)
+- `https://<dominio>/admin` → panel de administración (TLS)
+- `<ip>:<puerto>`           → clientes Ares (directo; el protocolo Ares no soporta TLS)
+
+Caddy publica los puertos 80/443 (deben estar libres en el host). Varias salas
+pueden tener cada una su dominio; comparten el mismo Caddy. Si ninguna sala
+tiene dominio, no se genera ni levanta nada extra.
 
 ### Modo headless (automatización / CI)
 
@@ -80,7 +99,8 @@ astra-creator generate /srv/astra-salas
 ```
 <dir>/
 ├── astra-creator.json      # estado (tus salas) — editable/versionable
-├── docker-compose.yml      # un servicio por sala
+├── docker-compose.yml      # un servicio por sala (+ caddy si hay dominios)
+├── Caddyfile               # solo si alguna sala tiene dominio HTTPS
 └── rooms/
     ├── <sala-1>/
     │   ├── astra.toml
@@ -95,7 +115,8 @@ con `d` se borra todo: contenedor, volumen legado y `rooms/<id>`.
 ## Administrar cada sala
 
 Una vez desplegada, cada sala se administra como cualquier Astra:
-- **Panel web**: `http://<tu-ip>:<puerto>/admin` (con el owner password de esa sala).
+- **Panel web**: `http://<tu-ip>:<puerto>/admin` (con el owner password de esa
+  sala), o `https://<dominio>/admin` si la sala tiene dominio HTTPS.
 - **Chat**: `/login <owner_password>` y los comandos.
 
 ## Licencia

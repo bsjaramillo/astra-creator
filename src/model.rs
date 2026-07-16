@@ -23,6 +23,12 @@ pub struct RoomDef {
     pub allow_registration: bool,
     /// ¿Anunciar la sala en el room search UDP?
     pub roomsearch: bool,
+    /// Dominio para HTTPS (vacío = sin TLS). Si se setea, el compose incluye
+    /// un Caddy como reverse proxy: la web/admin de la sala queda en
+    /// `https://<dominio>` con certificado automático de Let's Encrypt.
+    /// Los clientes Ares siguen entrando directo por el puerto (TCP plano).
+    #[serde(default)]
+    pub domain: String,
 }
 
 impl RoomDef {
@@ -37,6 +43,7 @@ impl RoomDef {
             topic: "Bienvenidos".to_string(),
             allow_registration: true,
             roomsearch: true,
+            domain: String::new(),
             id,
         }
     }
@@ -113,6 +120,20 @@ impl Project {
         self.rooms
             .iter()
             .any(|r| r.port == port && Some(r.id.as_str()) != except_id)
+    }
+
+    /// ¿El dominio ya está en uso por otra sala (excluyendo `except_id`)?
+    pub fn domain_in_use(&self, domain: &str, except_id: Option<&str>) -> bool {
+        !domain.is_empty()
+            && self
+                .rooms
+                .iter()
+                .any(|r| r.domain == domain && Some(r.id.as_str()) != except_id)
+    }
+
+    /// Salas con dominio configurado (las que entran al reverse proxy).
+    pub fn tls_rooms(&self) -> impl Iterator<Item = &RoomDef> {
+        self.rooms.iter().filter(|r| !r.domain.is_empty())
     }
 
     /// Inserta o reemplaza una sala por id.

@@ -94,18 +94,20 @@ pub enum Field {
     OwnerPassword,
     Port,
     Topic,
+    Domain,
     AllowRegistration,
     RoomSearch,
 }
 
 impl Field {
-    pub const ALL: [Field; 8] = [
+    pub const ALL: [Field; 9] = [
         Field::Id,
         Field::RoomName,
         Field::BotName,
         Field::OwnerPassword,
         Field::Port,
         Field::Topic,
+        Field::Domain,
         Field::AllowRegistration,
         Field::RoomSearch,
     ];
@@ -117,6 +119,7 @@ impl Field {
             Field::OwnerPassword     => "Owner password",
             Field::Port              => "Port",
             Field::Topic             => "Topic",
+            Field::Domain            => "Dominio HTTPS (opcional)",
             Field::AllowRegistration => "Allow registration (space toggles)",
             Field::RoomSearch        => "Room search (space toggles)",
         }
@@ -136,6 +139,7 @@ pub struct FormBuf {
     pub owner_password: String,
     pub port: String,
     pub topic: String,
+    pub domain: String,
     pub allow_registration: bool,
     pub roomsearch: bool,
     pub focus: usize,
@@ -153,6 +157,7 @@ impl FormBuf {
             owner_password: r.owner_password.clone(),
             port: r.port.to_string(),
             topic: r.topic.clone(),
+            domain: r.domain.clone(),
             allow_registration: r.allow_registration,
             roomsearch: r.roomsearch,
             focus: 0,
@@ -170,6 +175,7 @@ impl FormBuf {
             owner_password: String::new(),
             port: suggested_port.to_string(),
             topic: r.topic,
+            domain: String::new(),
             allow_registration: true,
             roomsearch: true,
             focus: 0,
@@ -242,6 +248,15 @@ impl App {
             .unwrap_or_else(|| "—".into())
     }
 
+    /// Versión de Astra corriendo en la sala (o "—" si no corre / no se sabe).
+    fn version_of(&self, room: &RoomDef) -> String {
+        self.status
+            .iter()
+            .find(|s| s.service == room.service_name())
+            .and_then(|s| s.version.clone())
+            .unwrap_or_else(|| "—".into())
+    }
+
     fn selected_room(&self) -> Option<RoomDef> {
         self.project.rooms.get(self.selected).cloned()
     }
@@ -276,6 +291,23 @@ impl App {
             f.error = Some(format!("El puerto {} ya está en uso por otra sala.", port));
             return;
         }
+        // Dominio: opcional. Se normaliza (minúsculas, sin esquema) y debe ser
+        // único entre salas: cada site block del Caddyfile proxea a una sola.
+        let domain = f
+            .domain
+            .trim()
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_ascii_lowercase();
+        if !domain.is_empty() && (domain.contains(' ') || !domain.contains('.')) {
+            f.error = Some("Dominio inválido (ej: chat.midominio.com).".into());
+            return;
+        }
+        if self.project.domain_in_use(&domain, except) {
+            f.error = Some(format!("El dominio '{}' ya está en uso por otra sala.", domain));
+            return;
+        }
         let room = RoomDef {
             id: id.clone(),
             room_name: f.room_name.trim().to_string(),
@@ -283,6 +315,7 @@ impl App {
             owner_password: f.owner_password.clone(),
             port,
             topic: f.topic.trim().to_string(),
+            domain,
             allow_registration: f.allow_registration,
             roomsearch: f.roomsearch,
         };
@@ -606,6 +639,7 @@ fn field_buf(f: &mut FormBuf, field: Field) -> &mut String {
         Field::OwnerPassword => &mut f.owner_password,
         Field::Port          => &mut f.port,
         Field::Topic         => &mut f.topic,
+        Field::Domain        => &mut f.domain,
         _ => unreachable!("toggle no tiene buffer de texto"),
     }
 }

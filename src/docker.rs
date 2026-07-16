@@ -14,6 +14,8 @@ pub struct ServiceStatus {
     pub service: String,
     /// Estado (`running`, `exited`, `created`, …).
     pub state: String,
+    /// Versión de Astra corriendo en el contenedor (solo si está `running`).
+    pub version: Option<String>,
 }
 
 /// ¿Está `docker` disponible y el daemon corriendo?
@@ -213,7 +215,32 @@ fn parse_status(v: &serde_json::Value) -> Option<ServiceStatus> {
         .and_then(|x| x.as_str())
         .unwrap_or("unknown")
         .to_string();
-    Some(ServiceStatus { service, state })
+    // La versión real de Astra corriendo en la sala (puede diferir entre
+    // salas hasta hacer update). Solo tiene sentido con el contenedor vivo;
+    // el nombre del contenedor coincide con el del servicio (container_name).
+    let version = if state == "running" {
+        astra_version(&service)
+    } else {
+        None
+    };
+    Some(ServiceStatus { service, state, version })
+}
+
+/// Versión de Astra dentro de un contenedor corriendo, vía
+/// `docker exec <container> /app/astra --version` (clap imprime
+/// "astra X.Y.Z"). `None` si el exec falla o la salida no tiene versión.
+fn astra_version(container: &str) -> Option<String> {
+    let out = Command::new("docker")
+        .args(["exec", container, "/app/astra", "--version"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .last()
+        .map(|v| v.to_string())
 }
 
 #[cfg(test)]

@@ -142,14 +142,59 @@ pub fn compose_yaml(project: &Project, default_uid: &str, default_gid: &str) -> 
         s.push_str("    environment:\n");
         s.push_str("      RUST_LOG: info\n");
     }
-    // Ya no hay volúmenes con nombre: cada sala usa un bind mount a
+    // Si alguna sala tiene dominio, entra un Caddy compartido como reverse
+    // proxy: da HTTPS (Let's Encrypt) a la web/admin de esas salas. Los
+    // clientes Ares no pasan por acá: hablan TCP binario directo al puerto
+    // publicado de cada sala (el protocolo Ares no soporta TLS).
+    let tls: Vec<&RoomDef> = project.tls_rooms().collect();
+    if !tls.is_empty() {
+        s.push_str("  caddy:\n");
+        s.push_str("    image: caddy:2-alpine\n");
+        s.push_str("    container_name: astra-caddy\n");
+        s.push_str("    restart: unless-stopped\n");
+        s.push_str("    ports:\n");
+        s.push_str("      - \"80:80\"\n");
+        s.push_str("      - \"443:443\"\n");
+        s.push_str("    volumes:\n");
+        s.push_str("      - ./Caddyfile:/etc/caddy/Caddyfile:ro\n");
+        s.push_str("      - caddy-data:/data\n");
+        s.push_str("      - caddy-config:/config\n");
+        s.push_str("    depends_on:\n");
+        for r in &tls {
+            s.push_str(&format!("      - {}\n", r.service_name()));
+        }
+        s.push_str("volumes:\n");
+        s.push_str("  caddy-data:\n");
+        s.push_str("  caddy-config:\n");
+    }
+    // Las salas no usan volúmenes con nombre: cada una monta un bind mount a
     // rooms/<id>/data (ver arriba), accesible desde el host.
+    s
+}
+
+/// Genera el `Caddyfile`: un site block por sala con dominio, proxeando la
+/// superficie HTTP/WebSocket (cliente web + `/admin`) al contenedor de esa
+/// sala. Caddy obtiene y renueva los certificados solo; únicamente hace falta
+/// que el DNS del dominio apunte al host.
+pub fn caddyfile(project: &Project) -> String {
+    let mut s = String::new();
+    s.push_str("# Generado por astra-creator. No editar a mano: usá la TUI.\n");
+    s.push_str("# El DNS de cada dominio debe apuntar a este servidor (puertos 80/443).\n");
+    for r in project.tls_rooms() {
+        s.push_str(&format!(
+            "\n{domain} {{\n\treverse_proxy {svc}:{port}\n\tencode gzip\n}}\n",
+            domain = r.domain,
+            svc = r.service_name(),
+            port = r.port,
+        ));
+    }
     s
 }
 
 /// Escribe todos los artefactos en `base_dir`:
 /// - `astra-creator.json` (estado)
 /// - `docker-compose.yml`
+/// - `Caddyfile` (solo si alguna sala tiene dominio; si no, se elimina)
 /// - `rooms/<id>/astra.toml` por cada sala
 pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
     std::fs::create_dir_all(base_dir)?;
@@ -159,6 +204,15 @@ pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
         base_dir.join("docker-compose.yml"),
         compose_yaml(project, &uid, &gid),
     )?;
+    let caddy_path = base_dir.join("Caddyfile");
+    if project.tls_rooms().next().is_some() {
+        std::fs::write(&caddy_path, caddyfile(project))?;
+    } else if caddy_path.exists() {
+        // Sin dominios no hay servicio caddy en el compose; un Caddyfile
+        // viejo solo confunde. El deploy completo usa --remove-orphans, así
+        // que el contenedor caddy previo también se limpia.
+        std::fs::remove_file(&caddy_path)?;
+    }
     for r in &project.rooms {
         let dir = base_dir.join("rooms").join(&r.id);
         std::fs::create_dir_all(&dir)?;
@@ -166,10 +220,12 @@ pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
         // Carpeta de datos de la sala (bind mount → /app/data). Se crea acá,
         // con el dueño del usuario que corre astra-creator, para que Docker
         // no la cree como root y quede accesible/editable desde el SO.
-        // También el subdir `logs`: así ya existe con el dueño correcto y el
-        // container (que corre como ese mismo UID) puede rotar el log ahí sin
-        // toparse con un problema de permisos al crearlo.
+        // También los subdirs `logs` y `scripts`: así ya existen con el dueño
+        // correcto (el container corre como ese mismo UID) y no dan WARN al
+        // arrancar. `scripts/` es además donde el operador deja sus scripts JS
+        // (accesible desde el host, editable directamente).
         std::fs::create_dir_all(dir.join("data").join("logs"))?;
+        std::fs::create_dir_all(dir.join("data").join("scripts"))?;
     }
     Ok(())
 }
@@ -268,6 +324,10 @@ mod tests {
         assert!(dir.join("astra-creator.json").exists());
         assert!(dir.join("rooms/room-a/astra.toml").exists());
         assert!(dir.join("rooms/room-a/data").is_dir());
+        // Subdirs pre-creados con el dueño correcto (evitan WARN y problemas
+        // de permisos al arrancar el container).
+        assert!(dir.join("rooms/room-a/data/logs").is_dir());
+        assert!(dir.join("rooms/room-a/data/scripts").is_dir());
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -276,5 +336,67 @@ mod tests {
         let p = Project::default();
         let y = compose_yaml(&p, "1000", "1000");
         assert!(!y.contains("\nvolumes:"));
+    }
+
+    #[test]
+    fn compose_without_domains_has_no_caddy() {
+        let mut p = Project::default();
+        p.rooms.push(RoomDef::new("sala", 5009));
+        let y = compose_yaml(&p, "1000", "1000");
+        assert!(!y.contains("caddy"));
+    }
+
+    #[test]
+    fn compose_with_domain_includes_caddy_service() {
+        let mut p = Project::default();
+        let mut r = RoomDef::new("sala", 5009);
+        r.domain = "chat.example.com".into();
+        p.rooms.push(r);
+        p.rooms.push(RoomDef::new("otra", 5010)); // sin dominio
+        let y = compose_yaml(&p, "1000", "1000");
+        assert!(y.contains("  caddy:"));
+        assert!(y.contains("\"80:80\""));
+        assert!(y.contains("\"443:443\""));
+        assert!(y.contains("- ./Caddyfile:/etc/caddy/Caddyfile:ro"));
+        // depends_on solo de las salas con dominio.
+        assert!(y.contains("      - astra-sala\n"));
+        assert!(!y.contains("      - astra-otra\n"));
+        // Volúmenes de Caddy (certs + config).
+        assert!(y.contains("volumes:\n  caddy-data:\n  caddy-config:"));
+    }
+
+    #[test]
+    fn caddyfile_has_block_per_domain() {
+        let mut p = Project::default();
+        let mut a = RoomDef::new("a", 5009);
+        a.domain = "chat.example.com".into();
+        let mut b = RoomDef::new("b", 5010);
+        b.domain = "otra.example.com".into();
+        p.rooms.push(a);
+        p.rooms.push(b);
+        p.rooms.push(RoomDef::new("c", 5011)); // sin dominio: no aparece
+        let c = caddyfile(&p);
+        assert!(c.contains("chat.example.com {"));
+        assert!(c.contains("reverse_proxy astra-a:5009"));
+        assert!(c.contains("otra.example.com {"));
+        assert!(c.contains("reverse_proxy astra-b:5010"));
+        // Ojo: "astra-c" a secas matchea el header "astra-creator".
+        assert!(!c.contains("reverse_proxy astra-c:"));
+    }
+
+    #[test]
+    fn write_project_creates_and_removes_caddyfile() {
+        let dir = std::env::temp_dir().join(format!("astra_creator_caddy_{}", std::process::id()));
+        let mut p = Project::default();
+        let mut r = RoomDef::new("sala", 5009);
+        r.domain = "chat.example.com".into();
+        p.rooms.push(r);
+        write_project(&dir, &p).unwrap();
+        assert!(dir.join("Caddyfile").exists());
+        // Al quitar el dominio, el Caddyfile obsoleto se elimina.
+        p.rooms[0].domain.clear();
+        write_project(&dir, &p).unwrap();
+        assert!(!dir.join("Caddyfile").exists());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
