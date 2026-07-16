@@ -1,6 +1,6 @@
 [package]
 name = "astra-creator"
-version = "0.0.9"
+version = "0.0.10"
 edition = "2021"
 rust-version = "1.75"
 description = "TUI para crear y administrar salas de chat Astra sobre Docker"
