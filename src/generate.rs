@@ -64,8 +64,45 @@ pub fn astra_toml(room: &RoomDef) -> String {
     )
 }
 
-/// Genera el `docker-compose.yml` con un servicio por sala.
-pub fn compose_yaml(project: &Project) -> String {
+/// Detecta el UID/GID del usuario que corre astra-creator (Unix), para
+/// usarlo como DEFAULT del container en el compose. Así el container corre
+/// como el dueño de las carpetas montadas (`rooms/<id>/data`) y puede
+/// escribir en `/app/data` (crear `logs/`, la DB, etc.). Sin esto, el
+/// default era `1000` fijo: si tu UID no es 1000, el container no podía
+/// crear `/app/data/logs` y el server paniqueaba al arrancar.
+///
+/// Fallback a `1000` si no se puede detectar o en plataformas sin `id`
+/// (en Windows/Mac, Docker Desktop maneja los permisos de bind mounts por su
+/// cuenta, así que el UID del host no aplica igual).
+pub fn host_uid_gid() -> (String, String) {
+    #[cfg(unix)]
+    {
+        let run = |arg: &str| -> Option<String> {
+            let out = std::process::Command::new("id").arg(arg).output().ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) {
+                Some(s)
+            } else {
+                None
+            }
+        };
+        let uid = run("-u").unwrap_or_else(|| "1000".to_string());
+        let gid = run("-g").unwrap_or_else(|| "1000".to_string());
+        (uid, gid)
+    }
+    #[cfg(not(unix))]
+    {
+        ("1000".to_string(), "1000".to_string())
+    }
+}
+
+/// Genera el `docker-compose.yml` con un servicio por sala. `default_uid`/
+/// `default_gid` son el usuario por defecto del container (ver
+/// [`host_uid_gid`]).
+pub fn compose_yaml(project: &Project, default_uid: &str, default_gid: &str) -> String {
     let mut s = String::new();
     s.push_str("# Generado por astra-creator. No editar a mano: usá la TUI.\n");
     s.push_str("services:\n");
@@ -76,9 +113,15 @@ pub fn compose_yaml(project: &Project) -> String {
         s.push_str(&format!("    container_name: {svc}\n"));
         s.push_str("    restart: unless-stopped\n");
         // Corre como el usuario del host para que los archivos de la sala
-        // (DB, bans, cuentas, avatares, scripts) queden accesibles/editables
-        // desde el SO. Cambiá con: PUID=$(id -u) PGID=$(id -g) docker compose up -d
-        s.push_str("    user: \"${PUID:-1000}:${PGID:-1000}\"\n");
+        // (DB, bans, cuentas, avatares, scripts, logs) queden accesibles/
+        // editables desde el SO Y para que el container pueda ESCRIBIR en el
+        // bind mount. El default es el UID/GID real del host (no 1000 fijo),
+        // así funciona aunque no exportes PUID/PGID. Igual podés overridear:
+        // PUID=$(id -u) PGID=$(id -g) docker compose up -d
+        s.push_str(&format!(
+            "    user: \"${{PUID:-{}}}:${{PGID:-{}}}\"\n",
+            default_uid, default_gid
+        ));
         s.push_str("    ports:\n");
         s.push_str(&format!("      - \"{p}:{p}\"\n", p = r.port));
         s.push_str(&format!("      - \"{p}:{p}/udp\"\n", p = r.port));
@@ -111,7 +154,11 @@ pub fn compose_yaml(project: &Project) -> String {
 pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
     std::fs::create_dir_all(base_dir)?;
     project.save(base_dir)?;
-    std::fs::write(base_dir.join("docker-compose.yml"), compose_yaml(project))?;
+    let (uid, gid) = host_uid_gid();
+    std::fs::write(
+        base_dir.join("docker-compose.yml"),
+        compose_yaml(project, &uid, &gid),
+    )?;
     for r in &project.rooms {
         let dir = base_dir.join("rooms").join(&r.id);
         std::fs::create_dir_all(&dir)?;
@@ -119,7 +166,10 @@ pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
         // Carpeta de datos de la sala (bind mount → /app/data). Se crea acá,
         // con el dueño del usuario que corre astra-creator, para que Docker
         // no la cree como root y quede accesible/editable desde el SO.
-        std::fs::create_dir_all(dir.join("data"))?;
+        // También el subdir `logs`: así ya existe con el dueño correcto y el
+        // container (que corre como ese mismo UID) puede rotar el log ahí sin
+        // toparse con un problema de permisos al crearlo.
+        std::fs::create_dir_all(dir.join("data").join("logs"))?;
     }
     Ok(())
 }
@@ -127,6 +177,32 @@ pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn host_uid_gid_matches_id_command() {
+        // host_uid_gid() debe coincidir con `id -u`/`id -g` reales, para que
+        // el container corra como el dueño de las carpetas montadas.
+        let (uid, gid) = host_uid_gid();
+        let real_uid = String::from_utf8_lossy(
+            &std::process::Command::new("id").arg("-u").output().unwrap().stdout,
+        ).trim().to_string();
+        let real_gid = String::from_utf8_lossy(
+            &std::process::Command::new("id").arg("-g").output().unwrap().stdout,
+        ).trim().to_string();
+        assert_eq!(uid, real_uid, "el UID del compose debe ser el real del host");
+        assert_eq!(gid, real_gid, "el GID del compose debe ser el real del host");
+    }
+
+    #[test]
+    fn compose_user_uses_provided_uid_gid() {
+        // Un UID distinto de 1000 debe aparecer en el compose (regresión del
+        // bug: default 1000 fijo no coincidía con el dueño de las carpetas).
+        let mut p = Project::default();
+        p.rooms.push(RoomDef::new("sala", 5009));
+        let y = compose_yaml(&p, "1007", "1007");
+        assert!(y.contains("user: \"${PUID:-1007}:${PGID:-1007}\""), "compose:\n{}", y);
+    }
 
     #[test]
     fn astra_toml_has_required_fields() {
@@ -159,7 +235,7 @@ mod tests {
         let mut p = Project::default();
         p.rooms.push(RoomDef::new("uno", 5009));
         p.rooms.push(RoomDef::new("dos", 5010));
-        let y = compose_yaml(&p);
+        let y = compose_yaml(&p, "1000", "1000");
         assert!(y.contains("astra-uno:"));
         assert!(y.contains("astra-dos:"));
         assert!(y.contains("\"5009:5009\""));
@@ -177,7 +253,7 @@ mod tests {
         // solo args, no repetir /app/astra (si no, Astra lo lee como subcomando).
         let mut p = Project::default();
         p.rooms.push(RoomDef::new("x", 5009));
-        let y = compose_yaml(&p);
+        let y = compose_yaml(&p, "1000", "1000");
         assert!(y.contains("command: [\"--config\", \"/app/astra.toml\", \"--port\", \"5009\"]"));
         assert!(!y.contains("command: [\"/app/astra\""));
     }
@@ -198,7 +274,7 @@ mod tests {
     #[test]
     fn empty_project_compose_has_no_volumes_section() {
         let p = Project::default();
-        let y = compose_yaml(&p);
+        let y = compose_yaml(&p, "1000", "1000");
         assert!(!y.contains("\nvolumes:"));
     }
 }
