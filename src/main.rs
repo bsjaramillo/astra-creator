@@ -221,7 +221,7 @@ impl App {
             message: if docker_ok {
                 "Listo. a: agregar · D: deploy · s/x: start/stop · u: update · l: logs · ?: ayuda · q: salir".into()
             } else {
-                "⚠ docker no disponible: podés crear salas y generar archivos, pero no gestionar contenedores.".into()
+                "⚠ docker no disponible: puedes crear salas y generar archivos, pero no gestionar contenedores.".into()
             },
             logs: String::new(),
             image_buf: String::new(),
@@ -273,7 +273,7 @@ impl App {
         let port: u16 = match f.port.trim().parse() {
             Ok(p) if p >= 1024 => p,
             _ => {
-                f.error = Some("Puerto inválido (usá 1024–65535).".into());
+                f.error = Some("Puerto inválido (usa 1024–65535).".into());
                 return;
             }
         };
@@ -649,7 +649,7 @@ fn handle_confirm_key(app: &mut App, code: KeyCode) {
         KeyCode::Char('y') | KeyCode::Enter => {
             app.screen = Screen::List;
             if app.busy.is_some() {
-                app.message = "✗ Hay una operación en curso; esperá a que termine.".into();
+                app.message = "✗ Hay una operación en curso; espera a que termine.".into();
                 return;
             }
             if let Some(r) = app.selected_room() {

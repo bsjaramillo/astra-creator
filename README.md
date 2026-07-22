@@ -35,7 +35,7 @@ cargo build --release   # -> target/release/astra-creator
 ```
 
 Requiere `docker` + `docker compose` en la máquina para gestionar contenedores
-(sin Docker igual podés crear salas y generar los archivos).
+(sin Docker igual puedes crear salas y generar los archivos).
 
 ## Uso
 
@@ -65,16 +65,36 @@ En la TUI:
 | `?` / `h` | Menú de ayuda con todos los atajos |
 | `q` | Salir |
 
-En el formulario: `Tab`/`↑`/`↓` moverse, `Espacio` togglear los switches,
+En el formulario: `Tab`/`↑`/`↓` moverse, `Espacio` alternar los switches,
 `Enter` guardar, `Esc` cancelar.
 
 La lista muestra por sala su estado y la **versión de Astra** que corre en el
 contenedor (leída del binario en vivo, así ves qué salas quedaron atrás
 después de un update).
 
+### Abrir los puertos
+
+El deploy publica el puerto de cada sala en el host, pero eso no alcanza para
+que entre gente de afuera. Hay que abrirlo en **TCP y UDP** en los dos
+firewalls:
+
+```bash
+# 1. Firewall del sistema operativo:
+sudo ufw allow 5009/tcp && sudo ufw allow 5009/udp
+```
+
+```
+# 2. Firewall del VPS (panel del proveedor):
+#    security groups en AWS · reglas de ingreso en Oracle Cloud / GCP ·
+#    el panel de Hetzner / Vultr / DigitalOcean
+```
+
+Es el paso que más se olvida: si el proveedor bloquea el puerto, nadie entra
+aunque `ufw` lo permita y el contenedor figure como `running`.
+
 ### HTTPS (opcional, por sala)
 
-Poné un **dominio** en el campo "Dominio HTTPS" del formulario (ej.
+Pon un **dominio** en el campo "Dominio HTTPS" del formulario (ej.
 `chat.midominio.com`, con su DNS apuntando al servidor). Con al menos una sala
 con dominio, el deploy agrega un [Caddy](https://caddyserver.com) como reverse
 proxy que obtiene y renueva solo los certificados de Let's Encrypt:
@@ -83,9 +103,11 @@ proxy que obtiene y renueva solo los certificados de Let's Encrypt:
 - `https://<dominio>/admin` → panel de administración (TLS)
 - `<ip>:<puerto>`           → clientes Ares (directo; el protocolo Ares no soporta TLS)
 
-Caddy publica los puertos 80/443 (deben estar libres en el host). Varias salas
-pueden tener cada una su dominio; comparten el mismo Caddy. Si ninguna sala
-tiene dominio, no se genera ni levanta nada extra.
+Caddy publica los puertos 80/443: deben estar libres en el host **y abiertos
+en el firewall de tu VPS** (además del firewall del SO), o Let's Encrypt no
+puede validar el dominio y el certificado nunca se emite. Varias salas pueden
+tener cada una su dominio; comparten el mismo Caddy. Si ninguna sala tiene
+dominio, no se genera ni levanta nada extra.
 
 ### Modo headless (automatización / CI)
 

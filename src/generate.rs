@@ -104,7 +104,7 @@ pub fn host_uid_gid() -> (String, String) {
 /// [`host_uid_gid`]).
 pub fn compose_yaml(project: &Project, default_uid: &str, default_gid: &str) -> String {
     let mut s = String::new();
-    s.push_str("# Generado por astra-creator. No editar a mano: usá la TUI.\n");
+    s.push_str("# Generado por astra-creator. No editar a mano: usa la TUI.\n");
     s.push_str("services:\n");
     for r in &project.rooms {
         let svc = r.service_name();
@@ -116,7 +116,7 @@ pub fn compose_yaml(project: &Project, default_uid: &str, default_gid: &str) -> 
         // (DB, bans, cuentas, avatares, scripts, logs) queden accesibles/
         // editables desde el SO Y para que el container pueda ESCRIBIR en el
         // bind mount. El default es el UID/GID real del host (no 1000 fijo),
-        // así funciona aunque no exportes PUID/PGID. Igual podés overridear:
+        // así funciona aunque no exportes PUID/PGID. Igual puedes overridear:
         // PUID=$(id -u) PGID=$(id -g) docker compose up -d
         s.push_str(&format!(
             "    user: \"${{PUID:-{}}}:${{PGID:-{}}}\"\n",
@@ -144,7 +144,7 @@ pub fn compose_yaml(project: &Project, default_uid: &str, default_gid: &str) -> 
     }
     // Si alguna sala tiene dominio, entra un Caddy compartido como reverse
     // proxy: da HTTPS (Let's Encrypt) a la web/admin de esas salas. Los
-    // clientes Ares no pasan por acá: hablan TCP binario directo al puerto
+    // clientes Ares no pasan por aquí: hablan TCP binario directo al puerto
     // publicado de cada sala (el protocolo Ares no soporta TLS).
     let tls: Vec<&RoomDef> = project.tls_rooms().collect();
     if !tls.is_empty() {
@@ -178,7 +178,7 @@ pub fn compose_yaml(project: &Project, default_uid: &str, default_gid: &str) -> 
 /// que el DNS del dominio apunte al host.
 pub fn caddyfile(project: &Project) -> String {
     let mut s = String::new();
-    s.push_str("# Generado por astra-creator. No editar a mano: usá la TUI.\n");
+    s.push_str("# Generado por astra-creator. No editar a mano: usa la TUI.\n");
     s.push_str("# El DNS de cada dominio debe apuntar a este servidor (puertos 80/443).\n");
     for r in project.tls_rooms() {
         s.push_str(&format!(
@@ -217,7 +217,7 @@ pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
         let dir = base_dir.join("rooms").join(&r.id);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("astra.toml"), astra_toml(r))?;
-        // Carpeta de datos de la sala (bind mount → /app/data). Se crea acá,
+        // Carpeta de datos de la sala (bind mount → /app/data). Se crea aquí,
         // con el dueño del usuario que corre astra-creator, para que Docker
         // no la cree como root y quede accesible/editable desde el SO.
         // También los subdirs `logs` y `scripts`: así ya existen con el dueño
