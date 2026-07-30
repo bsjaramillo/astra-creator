@@ -1,6 +1,32 @@
 //! Generación de los artefactos: `astra.toml` por sala y `docker-compose.yml`.
+//!
+//! # Dos escritores sobre el mismo `astra.toml`
+//!
+//! El `astra.toml` de cada sala lo edita **también** el panel `/admin` de Astra
+//! en runtime (pestañas Server / Room linking / Security y el editor TOML
+//! crudo). Por eso astra-creator NO regenera ese archivo desde cero: lo
+//! reconcilia campo por campo, con un dueño definido para cada uno.
+//!
+//! - **De astra-creator** (orquestación, no puede cederlos porque están
+//!   acoplados al `ports:` del compose y al bind mount de datos): `port`,
+//!   `web_port`, `data_dir`.
+//! - **De astra-creator, pero editables desde los dos lados**: los campos que
+//!   modela [`RoomDef`] (`room_name`, `bot_name`, `room_topic`,
+//!   `owner_password`, `allow_registration`, `roomsearch`). Gana el último que
+//!   los tocó: antes de escribir, [`sync_rooms_from_disk`] refresca el
+//!   `RoomDef` desde el archivo, así que reescribirlos es un no-op salvo en lo
+//!   que el operador acaba de cambiar en la TUI.
+//! - **Del panel, se preservan intactos**: `guid`, `language`, `web_enabled`,
+//!   `link_hub_enabled`, `link_trusted_leaves`, `security.*`, `seed_url`,
+//!   `update_check` y cualquier clave que astra-creator no conozca.
+//!
+//! Solo cuando el archivo no existe se escribe completo, como scaffold inicial
+//! ([`astra_toml`]).
 
 use std::path::Path;
+
+use anyhow::Context;
+use toml_edit::{value, DocumentMut};
 
 use crate::model::{Project, RoomDef};
 
@@ -99,6 +125,88 @@ pub fn host_uid_gid() -> (String, String) {
     }
 }
 
+/// Aplica los campos que administra astra-creator sobre un `astra.toml` que
+/// **ya existe**, preservando todo lo demás: comentarios, orden de las claves,
+/// y cualquier valor que haya escrito el panel `/admin` (ver el doc del
+/// módulo para el reparto de dueños).
+///
+/// Falla si el archivo no parsea como TOML. Es deliberado: antes se
+/// sobreescribía a ciegas, y ante un archivo corrupto (o editado a mano con un
+/// error) preferimos frenar y decirlo que destruir la configuración de la sala.
+pub fn reconcile_astra_toml(existing: &str, room: &RoomDef) -> anyhow::Result<String> {
+    let mut doc: DocumentMut = existing
+        .parse()
+        .context("el astra.toml existente no es TOML válido; corrígelo o bórralo para regenerarlo")?;
+
+    // Orquestación: siempre gana astra-creator.
+    doc["port"] = value(room.port as i64);
+    doc["web_port"] = value(room.port as i64);
+    doc["data_dir"] = value("/app/data");
+
+    // Config de sala: el `RoomDef` viene refrescado desde disco, así que esto
+    // solo cambia lo que el operador editó en la TUI.
+    doc["room_name"] = value(&room.room_name);
+    doc["bot_name"] = value(&room.bot_name);
+    doc["room_topic"] = value(&room.topic);
+    doc["owner_password"] = value(&room.owner_password);
+    doc["allow_registration"] = value(room.allow_registration);
+    doc["roomsearch"] = value(room.roomsearch);
+
+    Ok(doc.to_string())
+}
+
+/// Refresca en `room` los campos que el panel `/admin` pudo haber cambiado,
+/// leyéndolos del texto de su `astra.toml`. Best-effort: si el archivo no
+/// parsea, deja el `RoomDef` como estaba (el error se reporta al escribir).
+///
+/// No toca `port` (es de astra-creator) ni `domain` (no vive en el toml, solo
+/// en el estado de astra-creator y en el Caddyfile).
+pub fn sync_room_from_toml(room: &mut RoomDef, toml_text: &str) {
+    let Ok(doc) = toml_text.parse::<DocumentMut>() else {
+        return;
+    };
+    let s = |k: &str| doc.get(k).and_then(|v| v.as_str()).map(|v| v.to_string());
+    let b = |k: &str| doc.get(k).and_then(|v| v.as_bool());
+    if let Some(v) = s("room_name") {
+        room.room_name = v;
+    }
+    if let Some(v) = s("bot_name") {
+        room.bot_name = v;
+    }
+    if let Some(v) = s("room_topic") {
+        room.topic = v;
+    }
+    if let Some(v) = s("owner_password") {
+        room.owner_password = v;
+    }
+    if let Some(v) = b("allow_registration") {
+        room.allow_registration = v;
+    }
+    if let Some(v) = b("roomsearch") {
+        room.roomsearch = v;
+    }
+}
+
+/// Refresca todas las salas del proyecto desde sus `astra.toml` en disco, para
+/// que la TUI no muestre (ni reescriba) valores viejos cuando el panel `/admin`
+/// cambió algo. Importa especialmente para `owner_password`: es la credencial
+/// del panel, y si la TUI muestra una distinta a la del archivo el operador no
+/// puede entrar.
+///
+/// `keep` es el id de la sala que el operador acaba de editar en la TUI: esa se
+/// deja intacta, porque su valor en memoria es más nuevo que el del disco.
+pub fn sync_rooms_from_disk(base_dir: &Path, project: &mut Project, keep: Option<&str>) {
+    for r in &mut project.rooms {
+        if Some(r.id.as_str()) == keep {
+            continue;
+        }
+        let path = base_dir.join("rooms").join(&r.id).join("astra.toml");
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            sync_room_from_toml(r, &text);
+        }
+    }
+}
+
 /// Genera el `docker-compose.yml` con un servicio por sala. `default_uid`/
 /// `default_gid` son el usuario por defecto del container (ver
 /// [`host_uid_gid`]).
@@ -126,8 +234,12 @@ pub fn compose_yaml(project: &Project, default_uid: &str, default_gid: &str) -> 
         s.push_str(&format!("      - \"{p}:{p}\"\n", p = r.port));
         s.push_str(&format!("      - \"{p}:{p}/udp\"\n", p = r.port));
         s.push_str("    volumes:\n");
+        // Montado SIN `:ro` a propósito: el panel `/admin` de Astra edita este
+        // archivo (pestañas Server/Room linking/Security y el editor TOML). Con
+        // `:ro` el kernel devuelve EROFS y guardar desde el panel falla con
+        // "Read-only file system (os error 30)".
         s.push_str(&format!(
-            "      - ./rooms/{id}/astra.toml:/app/astra.toml:ro\n",
+            "      - ./rooms/{id}/astra.toml:/app/astra.toml\n",
             id = r.id
         ));
         // Bind mount: los datos de la sala viven en su propia carpeta
@@ -216,7 +328,16 @@ pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
     for r in &project.rooms {
         let dir = base_dir.join("rooms").join(&r.id);
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("astra.toml"), astra_toml(r))?;
+        // El panel /admin escribe en este mismo archivo: si ya existe se
+        // reconcilia (solo los campos de astra-creator), no se regenera.
+        let toml_path = dir.join("astra.toml");
+        let text = match std::fs::read_to_string(&toml_path) {
+            Ok(existing) => reconcile_astra_toml(&existing, r)
+                .with_context(|| format!("reconciliando {}", toml_path.display()))?,
+            // No existe todavía (sala nueva): scaffold completo.
+            Err(_) => astra_toml(r),
+        };
+        std::fs::write(&toml_path, text)?;
         // Carpeta de datos de la sala (bind mount → /app/data). Se crea aquí,
         // con el dueño del usuario que corre astra-creator, para que Docker
         // no la cree como root y quede accesible/editable desde el SO.
@@ -233,6 +354,201 @@ pub fn write_project(base_dir: &Path, project: &Project) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Un `astra.toml` como queda DESPUÉS de que el operador usó el panel
+    /// `/admin`: con secciones que astra-creator no modela, valores cambiados
+    /// en los campos que sí modela, y comentarios propios.
+    const PANEL_EDITED: &str = r#"# Generado por astra-creator — sala 'uno'
+port = 5009
+bot_name = "BotDelPanel"
+room_name = "Nombre Cambiado En El Panel"
+room_topic = "topic del panel"
+owner_password = "pw-cambiada-en-panel"
+allow_registration = false
+roomsearch = false
+language = 3
+web_enabled = true
+web_port = 5009
+data_dir = "/app/data"
+# Comentario escrito a mano por el operador.
+link_hub_enabled = true
+guid = "guid-personalizado-del-panel"
+seed_url = ""
+update_check = false
+
+[security]
+max_new_connections_per_ip = 99
+captcha_enabled = true
+
+[[link_trusted_leaves]]
+name = "otra-sala"
+guid = "guid-del-leaf"
+"#;
+
+    #[test]
+    fn reconcile_preserves_everything_the_panel_owns() {
+        let room = RoomDef::new("uno", 5009);
+        let out = reconcile_astra_toml(PANEL_EDITED, &room).unwrap();
+
+        // Lo que es del panel sobrevive intacto.
+        assert!(out.contains("language = 3"), "{out}");
+        assert!(out.contains("link_hub_enabled = true"), "{out}");
+        assert!(out.contains("guid = \"guid-personalizado-del-panel\""), "{out}");
+        assert!(out.contains("update_check = false"), "{out}");
+        assert!(out.contains("max_new_connections_per_ip = 99"), "{out}");
+        assert!(out.contains("captcha_enabled = true"), "{out}");
+        assert!(out.contains("[[link_trusted_leaves]]"), "{out}");
+        assert!(out.contains("guid = \"guid-del-leaf\""), "{out}");
+        // Y los comentarios también.
+        assert!(out.contains("# Comentario escrito a mano por el operador."), "{out}");
+
+        // Sigue siendo TOML válido y parseable.
+        out.parse::<DocumentMut>().expect("el resultado debe ser TOML válido");
+    }
+
+    #[test]
+    fn reconcile_always_wins_on_orchestration_fields() {
+        // Si el panel cambió el puerto o el data_dir, astra-creator los
+        // restituye: están acoplados al `ports:` del compose y al bind mount.
+        let doctored = PANEL_EDITED
+            .replace("port = 5009", "port = 9999")
+            .replace("data_dir = \"/app/data\"", "data_dir = \"/otro/lado\"");
+        let room = RoomDef::new("uno", 5009);
+        let out = reconcile_astra_toml(&doctored, &room).unwrap();
+        let doc: DocumentMut = out.parse().unwrap();
+        assert_eq!(doc["port"].as_integer(), Some(5009));
+        assert_eq!(doc["web_port"].as_integer(), Some(5009));
+        assert_eq!(doc["data_dir"].as_str(), Some("/app/data"));
+    }
+
+    #[test]
+    fn reconcile_applies_tui_edits_to_room_fields() {
+        // El operador editó el nombre en la TUI: eso sí debe llegar al archivo.
+        let mut room = RoomDef::new("uno", 5009);
+        room.room_name = "Nombre Nuevo Desde La TUI".to_string();
+        room.owner_password = "pw-de-la-tui".to_string();
+        let out = reconcile_astra_toml(PANEL_EDITED, &room).unwrap();
+        assert!(out.contains("room_name = \"Nombre Nuevo Desde La TUI\""), "{out}");
+        assert!(out.contains("owner_password = \"pw-de-la-tui\""), "{out}");
+    }
+
+    #[test]
+    fn reconcile_rejects_corrupt_toml_instead_of_clobbering() {
+        let room = RoomDef::new("uno", 5009);
+        let err = reconcile_astra_toml("esto no { es toml", &room).unwrap_err();
+        assert!(format!("{err}").contains("no es TOML válido"), "{err}");
+    }
+
+    #[test]
+    fn sync_reads_panel_values_back_into_the_room() {
+        let mut room = RoomDef::new("uno", 5009);
+        room.port = 5009;
+        sync_room_from_toml(&mut room, PANEL_EDITED);
+        assert_eq!(room.room_name, "Nombre Cambiado En El Panel");
+        assert_eq!(room.bot_name, "BotDelPanel");
+        assert_eq!(room.topic, "topic del panel");
+        assert_eq!(room.owner_password, "pw-cambiada-en-panel");
+        assert!(!room.allow_registration);
+        assert!(!room.roomsearch);
+        // El puerto NO se relee: es de astra-creator.
+        assert_eq!(room.port, 5009);
+    }
+
+    #[test]
+    fn sync_on_corrupt_toml_leaves_the_room_untouched() {
+        let mut room = RoomDef::new("uno", 5009);
+        let before = room.room_name.clone();
+        sync_room_from_toml(&mut room, "roto { {");
+        assert_eq!(room.room_name, before);
+    }
+
+    /// El ciclo completo: sala nueva → scaffold; el panel edita → astra-creator
+    /// regenera y NO pisa; el operador edita en la TUI → sí se aplica.
+    #[test]
+    fn full_roundtrip_panel_and_tui_coexist() {
+        let dir = std::env::temp_dir().join(format!("astra_creator_rt_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut p = Project::default();
+        p.rooms.push(RoomDef::new("uno", 5009));
+
+        // 1) Primera generación: scaffold completo.
+        write_project(&dir, &p).unwrap();
+        let toml_path = dir.join("rooms/uno/astra.toml");
+        assert!(toml_path.exists());
+
+        // 2) El panel /admin edita el archivo: sube security, prende el link,
+        //    y cambia el nombre de la sala.
+        let panel = std::fs::read_to_string(&toml_path).unwrap()
+            + "\nupdate_check = false\n[security]\nmax_concurrent_per_ip = 42\n";
+        let panel = panel.replace(
+            &format!("room_name = \"{}\"", p.rooms[0].room_name),
+            "room_name = \"Renombrada Por El Panel\"",
+        );
+        std::fs::write(&toml_path, &panel).unwrap();
+
+        // 3) astra-creator regenera (deploy, cambio de imagen, otra sala...).
+        //    Antes esto borraba todo; ahora releé y preserva.
+        sync_rooms_from_disk(&dir, &mut p, None);
+        write_project(&dir, &p).unwrap();
+        let after = std::fs::read_to_string(&toml_path).unwrap();
+        assert!(after.contains("max_concurrent_per_ip = 42"), "{after}");
+        assert!(after.contains("update_check = false"), "{after}");
+        assert!(after.contains("Renombrada Por El Panel"), "{after}");
+        // Y la TUI ahora refleja el nombre del panel.
+        assert_eq!(p.rooms[0].room_name, "Renombrada Por El Panel");
+
+        // 4) El operador edita el nombre en la TUI: esa sí gana.
+        p.rooms[0].room_name = "Renombrada Por La TUI".to_string();
+        write_project(&dir, &p).unwrap();
+        let after = std::fs::read_to_string(&toml_path).unwrap();
+        assert!(after.contains("Renombrada Por La TUI"), "{after}");
+        assert!(after.contains("max_concurrent_per_ip = 42"), "{after}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// El camino de la TUI: el operador edita la sala en el formulario y su
+    /// valor debe ganar, aunque el panel haya cambiado ese mismo campo antes.
+    /// Es lo que hace `keep` — sin él, la relectura desharía la edición que se
+    /// está guardando.
+    #[test]
+    fn keep_lets_the_tui_edit_win_over_disk() {
+        let dir = std::env::temp_dir().join(format!("astra_creator_keep_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut p = Project::default();
+        p.rooms.push(RoomDef::new("uno", 5009));
+        p.rooms.push(RoomDef::new("dos", 5010));
+        write_project(&dir, &p).unwrap();
+
+        // El panel renombra las DOS salas por fuera.
+        for id in ["uno", "dos"] {
+            let path = dir.join("rooms").join(id).join("astra.toml");
+            let t = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(
+                &path,
+                t.replace(
+                    &format!("room_name = \"Sala {id}\""),
+                    &format!("room_name = \"Panel {id}\""),
+                ),
+            )
+            .unwrap();
+        }
+
+        // El operador edita SOLO 'uno' en la TUI.
+        p.rooms[0].room_name = "TUI uno".to_string();
+        sync_rooms_from_disk(&dir, &mut p, Some("uno"));
+        write_project(&dir, &p).unwrap();
+
+        // 'uno' se queda con lo de la TUI...
+        let uno = std::fs::read_to_string(dir.join("rooms/uno/astra.toml")).unwrap();
+        assert!(uno.contains("room_name = \"TUI uno\""), "{uno}");
+        // ...y 'dos', que el operador no tocó, conserva lo del panel (antes se
+        // le pisaba con el valor viejo en memoria).
+        let dos = std::fs::read_to_string(dir.join("rooms/dos/astra.toml")).unwrap();
+        assert!(dos.contains("room_name = \"Panel dos\""), "{dos}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     #[cfg(unix)]
@@ -301,6 +617,17 @@ mod tests {
         assert!(y.contains("- ./rooms/dos/data:/app/data"));
         // Corre como el usuario del host.
         assert!(y.contains("user: \"${PUID:-1000}:${PGID:-1000}\""));
+    }
+
+    #[test]
+    fn compose_mounts_config_writable() {
+        // El panel /admin de Astra guarda cambios EN este archivo. Si el mount
+        // lleva `:ro`, guardar falla con EROFS ("Read-only file system").
+        let mut p = Project::default();
+        p.rooms.push(RoomDef::new("uno", 5009));
+        let y = compose_yaml(&p, "1000", "1000");
+        assert!(y.contains("- ./rooms/uno/astra.toml:/app/astra.toml\n"));
+        assert!(!y.contains("astra.toml:/app/astra.toml:ro"));
     }
 
     #[test]

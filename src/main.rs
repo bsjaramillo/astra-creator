@@ -208,7 +208,11 @@ pub struct App {
 
 impl App {
     fn new(dir: PathBuf) -> Self {
-        let project = Project::load(&dir);
+        let mut project = Project::load(&dir);
+        // El panel /admin pudo cambiar la config de las salas desde la última
+        // vez que corrió astra-creator: la fuente de verdad de esos campos es
+        // el astra.toml, no el astra-creator.json.
+        generate::sync_rooms_from_disk(&dir, &mut project, None);
         let docker_ok = docker::available();
         let mut app = Self {
             dir,
@@ -263,6 +267,18 @@ impl App {
 
     /// Persiste el proyecto y regenera los archivos (sin tocar Docker).
     fn save_and_generate(&mut self) -> Result<()> {
+        self.save_and_generate_keeping(None)
+    }
+
+    /// Igual que [`Self::save_and_generate`], pero releyendo primero los
+    /// `astra.toml` de disco para no pisar lo que el panel `/admin` haya
+    /// cambiado desde que se cargó el proyecto.
+    ///
+    /// `keep` es el id de la sala que el operador acaba de editar en la TUI:
+    /// esa NO se relee, porque su valor en memoria es el más nuevo. Sin esa
+    /// excepción, la relectura desharía la edición que se está guardando.
+    fn save_and_generate_keeping(&mut self, keep: Option<&str>) -> Result<()> {
+        generate::sync_rooms_from_disk(&self.dir, &mut self.project, keep);
         generate::write_project(&self.dir, &self.project)?;
         Ok(())
     }
@@ -326,7 +342,7 @@ impl App {
         self.project.upsert(room);
         self.form = None;
         self.screen = Screen::List;
-        match self.save_and_generate() {
+        match self.save_and_generate_keeping(Some(&id)) {
             Ok(_) => self.message = format!("✓ Sala '{}' guardada y archivos regenerados.", id),
             Err(e) => self.message = format!("✗ Error al escribir archivos: {}", e),
         }
@@ -342,17 +358,30 @@ fn main() -> Result<()> {
     // Subcomando headless: `astra-creator generate [dir]` regenera los
     // archivos desde el estado guardado, sin abrir la TUI (útil para CI /
     // automatización).
+    //
+    // Reconcilia, NO impone: la config de sala (nombre, bot, topic, password,
+    // registro, roomsearch) se lee de los `astra.toml` porque el panel /admin
+    // también los edita y es la fuente de verdad viva. Este subcomando solo
+    // fuerza la orquestación (`port`/`web_port`/`data_dir`) y el compose. Para
+    // CAMBIAR la config de una sala usá la TUI (o el panel): editar a mano
+    // `astra-creator.json` y correr `generate` no la aplica.
     if args.first().map(|s| s.as_str()) == Some("generate") {
         let dir = args
             .get(1)
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."));
-        let project = Project::load(&dir);
+        let mut project = Project::load(&dir);
+        generate::sync_rooms_from_disk(&dir, &mut project, None);
         generate::write_project(&dir, &project)?;
         println!(
             "Generados docker-compose.yml + {} astra.toml en {}",
             project.rooms.len(),
             dir.display()
+        );
+        println!(
+            "La config de sala se preservó desde los astra.toml existentes \
+             (el panel /admin es su fuente de verdad); se forzaron solo \
+             port/web_port/data_dir."
         );
         return Ok(());
     }
@@ -467,6 +496,10 @@ fn handle_list_key(app: &mut App, code: KeyCode) {
             app.screen = Screen::Form;
         }
         KeyCode::Char('e') => {
+            // Releer justo antes de abrir el formulario: es el momento en que
+            // más importa que los valores sean los vivos, porque lo que se
+            // muestre acá es lo que se va a reescribir al guardar.
+            generate::sync_rooms_from_disk(&app.dir, &mut app.project, None);
             if let Some(r) = app.selected_room() {
                 app.form = Some(FormBuf::from_room(&r));
                 app.screen = Screen::Form;

@@ -16,6 +16,10 @@ crossterm = "0.28"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
+# Edición de `astra.toml` PRESERVANDO comentarios, orden y claves ajenas: el
+# panel /admin de Astra escribe en el mismo archivo, así que astra-creator ya
+# no puede regenerarlo desde cero (ver `reconcile_astra_toml`).
+toml_edit = "0.22"
 
 [profile.release]
 strip = true

@@ -112,15 +112,20 @@ dominio, no se genera ni levanta nada extra.
 ### Modo headless (automatización / CI)
 
 ```bash
-# Regenera docker-compose.yml + los astra.toml desde el estado guardado.
+# Reconcilia docker-compose.yml + los astra.toml con el estado guardado.
 astra-creator generate /srv/astra-salas
 ```
+
+Reconcilia, no impone: la config de sala se preserva desde los `astra.toml`
+existentes (ver [Quién manda sobre astra.toml](#quién-manda-sobre-astratoml)),
+así que es seguro correrlo en cada deploy sin revertir lo que el operador haya
+cambiado desde el panel.
 
 ## Qué genera
 
 ```
 <dir>/
-├── astra-creator.json      # estado (tus salas) — editable/versionable
+├── astra-creator.json      # estado (tus salas) — versionable
 ├── docker-compose.yml      # un servicio por sala (+ caddy si hay dominios)
 ├── Caddyfile               # solo si alguna sala tiene dominio HTTPS
 └── rooms/
@@ -140,6 +145,37 @@ Una vez desplegada, cada sala se administra como cualquier Astra:
 - **Panel web**: `http://<tu-ip>:<puerto>/admin` (con el owner password de esa
   sala), o `https://<dominio>/admin` si la sala tiene dominio HTTPS.
 - **Chat**: `/login <owner_password>` y los comandos.
+
+## Quién manda sobre astra.toml
+
+El `astra.toml` de cada sala tiene **dos escritores**: astra-creator y el panel
+`/admin` de Astra (pestañas Server / Room linking / Security y el editor TOML
+crudo). Por eso astra-creator no lo regenera desde cero — lo reconcilia campo
+por campo:
+
+| Campo | Dueño |
+|---|---|
+| `port`, `web_port`, `data_dir` | **astra-creator**, siempre. Están acoplados al `ports:` del compose y al bind mount de datos; si el panel los cambia, se restituyen. |
+| `room_name`, `bot_name`, `room_topic`, `owner_password`, `allow_registration`, `roomsearch` | **Los dos.** Gana el último que los tocó: la TUI relee el `astra.toml` antes de mostrar el formulario, así que al guardar solo escribe lo que cambiaste. |
+| `language`, `web_enabled`, `guid`, `link_hub_enabled`, `link_trusted_leaves`, `security.*`, `seed_url`, `update_check`, y cualquier clave desconocida | **El panel.** astra-creator no los toca; se preservan con sus comentarios. |
+
+Consecuencias prácticas:
+
+- Es seguro correr `generate`, deployar o editar otra sala: ya no se pisa lo que
+  configuraste desde el panel.
+- Para cambiar la config de una sala usá **la TUI o el panel**. Editar a mano
+  `astra-creator.json` y correr `generate` **no** la aplica: para esos campos la
+  fuente de verdad es el `astra.toml`, y el JSON se refresca desde él.
+- El bind mount del config va **sin `:ro`** justamente porque el panel escribe
+  ahí. Con `:ro`, guardar desde el panel falla con
+  `Read-only file system (os error 30)`.
+- Si un `astra.toml` quedó corrupto (TOML inválido), `generate` **falla y lo
+  dice** en vez de sobreescribirlo: se prefiere frenar antes que destruir la
+  configuración de la sala.
+- El puerto se pasa además como `--port` en el `command:` del compose, a
+  propósito: es un pin que garantiza que el puerto del contenedor coincida con
+  el mapeo `ports:`. Por eso editar el puerto desde el panel no tiene efecto (el
+  panel lo advierte).
 
 ## Licencia
 
