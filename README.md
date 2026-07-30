@@ -40,11 +40,11 @@ Requiere `docker` + `docker compose` en la máquina para gestionar contenedores
 ## Uso
 
 ```bash
-# Abre la TUI en el directorio actual (guarda ahí el estado y los archivos).
+# Crea una carpeta para guardar los archivos de configuracion y datos de la sala
+mkdir astra-servers
+# Abre la TUI en el directorio creado (guarda ahí el estado y los archivos).
+cd astra-servers
 astra-creator
-
-# O en un directorio específico:
-astra-creator /srv/astra-salas
 ```
 
 En la TUI:
