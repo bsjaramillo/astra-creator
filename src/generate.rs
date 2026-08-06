@@ -47,15 +47,17 @@ fn toml_str(s: &str) -> String {
     out
 }
 
-/// GUID estable por sala (≥16 chars), derivado del id.
-fn room_guid(id: &str) -> String {
-    let base = format!("astra-{}-guid", id);
-    if base.len() >= 16 {
-        base
-    } else {
-        format!("{:0<16}", base)
-    }
-}
+/// Placeholder de `guid` que el servidor reconoce como "sin configurar".
+///
+/// astra-creator NO inventa el guid: escribe este valor y Astra lo reemplaza
+/// por uno aleatorio (16 bytes en hex) la primera vez que arranca, y lo
+/// persiste en el mismo `astra.toml` (por eso el compose lo monta sin `:ro`).
+///
+/// Antes se derivaba del id de la sala (`astra-<id>-guid`), lo que hacía que
+/// el "secreto" fuera el nombre de la sala: el guid es con lo que un leaf se
+/// autentica contra un hub (`SHA1(reverse(name ++ guid))`), así que cualquiera
+/// que supiera el nombre podía hacerse pasar por la sala.
+const PLACEHOLDER_GUID: &str = "astra-default-guid";
 
 /// Genera el contenido de `astra.toml` para una sala. Incluye todos los
 /// campos requeridos por `Settings`; el resto usa defaults del server.
@@ -77,6 +79,7 @@ pub fn astra_toml(room: &RoomDef) -> String {
          # (`port`); no usa un puerto propio. Para enlazar otro servidor a esta\n\
          # sala como hub: `--link-client <host>:{port}`.\n\
          link_hub_enabled = false\n\
+         # Lo reemplaza el servidor por un secreto aleatorio al primer arranque.\n\
          guid = {guid}\n",
         id = room.id,
         port = room.port,
@@ -86,7 +89,7 @@ pub fn astra_toml(room: &RoomDef) -> String {
         pw = toml_str(&room.owner_password),
         reg = room.allow_registration,
         search = room.roomsearch,
-        guid = toml_str(&room_guid(&room.id)),
+        guid = toml_str(PLACEHOLDER_GUID),
     )
 }
 
@@ -592,6 +595,16 @@ guid = "guid-del-leaf"
             assert!(t.contains(field), "falta {} en:\n{}", field, t);
         }
         assert!(t.contains("port = 5009"));
+    }
+
+    #[test]
+    fn scaffold_guid_is_the_placeholder_not_the_room_id() {
+        // Regresión: el scaffold escribía `astra-<id>-guid`, o sea el nombre
+        // de la sala como "secreto" del link. Debe ir el placeholder, que el
+        // servidor cambia por uno aleatorio al arrancar.
+        let t = astra_toml(&RoomDef::new("mi-sala", 5009));
+        assert!(t.contains("guid = \"astra-default-guid\""), "{t}");
+        assert!(!t.contains("astra-mi-sala-guid"), "{t}");
     }
 
     #[test]
